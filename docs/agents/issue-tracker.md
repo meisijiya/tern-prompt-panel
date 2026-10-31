@@ -42,6 +42,8 @@ GitHub 的 issue 和 PR 共用一个编号空间，所以裸的 `#42` 可能是�
 
 由 `/wayfinder` 使用。**地图**是一个单独的 issue，**子** issue 是 ticket。
 
+`wayfinder:map` 与 `wayfinder:<type>` 标签已在仓库中建好。
+
 - **地图**：一个标记为 `wayfinder:map` 的 issue，承载 Notes / Decisions-so-far / Fog 正文。`gh issue create --label wayfinder:map`。
 - **子 ticket**：作为 GitHub 子 issue 链接到地图的 issue（参见 **将 issue 设为父 issue 的子 issue**）。在未启用 sub-issues 时，把子项加进地图正文的任务列表，并在子项正文顶部放 `Part of #<map>`。标签：`wayfinder:<type>`（`research`/`prototype`/`grilling`/`task`）。一旦被认领，ticket 就分配给驱动的开发者。
 - **阻塞**：参见约定中的 **阻塞**。
