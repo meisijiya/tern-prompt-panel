@@ -199,8 +199,8 @@ function M.sort(list: { Template }): { Template }
 	return out
 end
 
---- 所有出现过的标签，按出现次数降序。
-function M.allLabels(list: { Template }): { string }
+--- 每个标签带条数，按条数降序、同条数按名称。
+function M.labelCounts(list: { Template }): { { label: string, count: number } }
 	local counts: { [string]: number } = {}
 	for _, t in ipairs(list) do
 		for _, l in ipairs(t.labels) do
@@ -208,14 +208,14 @@ function M.allLabels(list: { Template }): { string }
 		end
 	end
 	local out = {}
-	for l in pairs(counts) do
-		table.insert(out, l)
+	for label, count in pairs(counts) do
+		table.insert(out, { label = label, count = count })
 	end
 	table.sort(out, function(a, b)
-		if counts[a] ~= counts[b] then
-			return counts[a] > counts[b]
+		if a.count ~= b.count then
+			return a.count > b.count
 		end
-		return a < b
+		return a.label < b.label
 	end)
 	return out
 end

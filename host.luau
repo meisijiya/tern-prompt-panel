@@ -18,6 +18,9 @@ local SCOPES: { templates.Scope } = { "all", "preset", "custom" }
 local SCOPE_LABEL = { all = "全部", preset = "预制模板", custom = "自定义模板" }
 local LIST_KEY = "items"
 local LIST_ID = "main." .. LIST_KEY .. "."
+local LABEL_KEY = "labels"
+local LABEL_ID = "main." .. LABEL_KEY
+local LABEL_ITEM = LABEL_ID .. "."
 local ACTION_KEY = "action"
 -- 预览最多显示多少行正文。
 local PREVIEW_LINES = 14
@@ -29,7 +32,7 @@ local FIELDS = {
 	{ key = "body", id = "main.f_body", label = "正文" },
 }
 
-type Mode = "browse" | "search" | "edit"
+type Mode = "browse" | "search" | "edit" | "label"
 
 type Draft = {
 	id: string,
@@ -46,6 +49,8 @@ type State = {
 	sel: string?,
 	scope: templates.Scope,
 	label: string?,
+	-- 标签菜单里的光标：1 是「全部标签」，其后是各标签。
+	labelAt: number,
 	showHidden: boolean,
 	preview: boolean,
 	query: field.Field,
@@ -316,23 +321,47 @@ local function cycleScope(state: State)
 	state.scope = "all"
 end
 
-local function cycleLabel(state: State)
-	local labels = templates.allLabels(allTemplates(state))
-	if #labels == 0 then
+--- 标签菜单的条目：第一项「全部标签」清掉筛选，其后每个标签带当前范围下的条数。
+local function labelEntries(state: State): { { label: string?, count: number } }
+	local base = templates.filter(allTemplates(state), {
+		scope = state.scope,
+		label = nil,
+		query = state.query.text,
+		showHidden = state.showHidden,
+	})
+	local out: { { label: string?, count: number } } = { { label = nil, count = #base } }
+	for _, e in ipairs(templates.labelCounts(base)) do
+		table.insert(out, e)
+	end
+	return out
+end
+
+local function openLabelMenu(state: State)
+	local entries = labelEntries(state)
+	if #entries <= 1 then
+		-- 没有任何标签可挑时，顺手清掉可能已失效的筛选，否则列表会一直空着。
 		state.label = nil
+		state.message = "没有可选的标签"
 		return
 	end
-	if not state.label then
-		state.label = labels[1]
-		return
-	end
-	for i, l in ipairs(labels) do
-		if l == state.label then
-			state.label = labels[(i % #labels) + 1]
-			return
+	state.labelAt = 1
+	for i, e in ipairs(entries) do
+		if e.label ~= nil and e.label == state.label then
+			state.labelAt = i
 		end
 	end
-	state.label = labels[1]
+	state.mode = "label"
+	state.message = nil
+end
+
+local function applyLabel(state: State)
+	local entries = labelEntries(state)
+	state.label = entries[math.clamp(state.labelAt, 1, #entries)].label
+	state.mode = "browse"
+end
+
+local function moveLabel(state: State, delta: number)
+	state.labelAt = math.clamp(state.labelAt + delta, 1, #labelEntries(state))
 end
 
 --- 键入一个字符或一段文本。
@@ -501,6 +530,39 @@ local function browseView(state: State, cx: BlockCx): Node
 	return ui.col(body)
 end
 
+--- 二级菜单：从已有标签里挑一个，每行带当前范围下的条数。
+local function labelView(state: State, cx: BlockCx): Node
+	local entries = labelEntries(state)
+	local items: { any } = {}
+	for _, e in ipairs(entries) do
+		table.insert(items, {
+			label = if e.label then e.label else "全部标签",
+			detail = tostring(e.count) .. " 条",
+			tone = if e.label == state.label then "accent" else nil,
+		})
+	end
+	local list = ui.list(items)
+	local kids = list.c or {}
+	for i in ipairs(entries) do
+		local p: { [string]: any } = kids[i].p or {}
+		-- 行 id 由区域前缀、列表 key 和这个裸 key 拼成：main.labels.<i>。
+		p.key = tostring(i)
+		kids[i].p = p
+	end
+	local lp: { [string]: any } = list.p or {}
+	lp.key = LABEL_KEY
+	lp.selected = LABEL_ITEM .. tostring(state.labelAt)
+	lp.max = { lines = math.max(4, cx.rows - 6) }
+	list.p = lp
+	return ui.col({
+		ui.text({
+			ui.span("选择标签", "strong"),
+			ui.span("  " .. tostring(#entries - 1) .. " 个 · 单击或 Enter 应用", "muted"),
+		}),
+		list,
+	})
+end
+
 local function editView(state: State): Node
 	local draft = state.draft :: Draft
 	local label: { Span | string } = {
@@ -617,6 +679,17 @@ end
 
 local function dockView(state: State, cx: BlockCx): Node
 	local rows: { Node } = {}
+	if state.mode == "label" then
+		rowsOf({
+			{ text = "应用", keys = { "Enter" }, variant = "primary", act = "labelapply" },
+			{ text = "取消", keys = { "Esc" }, variant = "quiet", act = "labelcancel" },
+		}, cx.cols, rows)
+		table.insert(rows, ui.text({ ui.span("↑↓ 选择标签，Esc 回到列表", "dim") }))
+		if state.message then
+			table.insert(rows, ui.text({ ui.span(state.message, "warning") }))
+		end
+		return ui.col(rows)
+	end
 	if state.mode == "edit" then
 		rowsOf({
 			{ text = "保存", keys = { "Enter" }, variant = "primary", act = "save" },
@@ -699,7 +772,11 @@ local function runAction(state: State, act: string, cx: BlockCx): boolean
 	elseif act == "scope" then
 		cycleScope(state)
 	elseif act == "label" then
-		cycleLabel(state)
+		openLabelMenu(state)
+	elseif act == "labelapply" then
+		applyLabel(state)
+	elseif act == "labelcancel" then
+		state.mode = "browse"
 	elseif act == "search" then
 		state.mode = "search"
 	elseif act == "sync" then
@@ -728,6 +805,26 @@ local function browseKey(state: State, key: Key, cx: BlockCx): boolean?
 			return true
 		end
 		return false
+	end
+
+	if state.mode == "label" then
+		local lk = key.text or key.name
+		if key.name == "escape" or lk == "l" then
+			state.mode = "browse"
+		elseif key.name == "enter" then
+			applyLabel(state)
+		elseif key.name == "up" or lk == "k" then
+			moveLabel(state, -1)
+		elseif key.name == "down" or lk == "j" then
+			moveLabel(state, 1)
+		elseif key.name == "home" or lk == "g" then
+			state.labelAt = 1
+		elseif key.name == "end" or lk == "G" then
+			state.labelAt = #labelEntries(state)
+		else
+			return false
+		end
+		return true
 	end
 
 	local k = key.text or key.name
@@ -842,6 +939,7 @@ tern.block.define("prompts", {
 			sel = nil,
 			scope = "all",
 			label = nil,
+			labelAt = 1,
 			showHidden = false,
 			preview = true,
 			query = field.new(""),
@@ -867,7 +965,14 @@ tern.block.define("prompts", {
 	end,
 
 	view = function(state: State, cx: BlockCx): BlockView
-		local main = if state.mode == "edit" then editView(state) else browseView(state, cx)
+		local main: Node
+		if state.mode == "edit" then
+			main = editView(state)
+		elseif state.mode == "label" then
+			main = labelView(state, cx)
+		else
+			main = browseView(state, cx)
+		end
 		return { main = main, dock = dockView(state, cx) }
 	end,
 
@@ -881,6 +986,22 @@ tern.block.define("prompts", {
 	event = function(state: State, ev: UiEvent, cx: BlockCx)
 		if (ev.ev == "select" or ev.ev == "activate") and type(ev.item) == "string" then
 			local item = ev.item
+			if string.sub(item, 1, #LABEL_ID + 1) == LABEL_ID .. "." then
+				local at = tonumber(string.sub(item, #LABEL_ID + 2))
+				if at then
+					state.labelAt = at
+					applyLabel(state)
+				end
+				return
+			end
+			if state.mode == "label" then
+				local at = tonumber(item)
+				if at then
+					state.labelAt = at
+					applyLabel(state)
+				end
+				return
+			end
 			state.sel = if string.sub(item, 1, #LIST_ID) == LIST_ID then string.sub(item, #LIST_ID + 1) else item
 			if ev.ev == "activate" then
 				runAction(state, "insert", cx)
