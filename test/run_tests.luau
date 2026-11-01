@@ -861,6 +861,78 @@ test("two copies of the same template get different commands", function()
 	ok(fsFiles["C:/home/.omp/agent/commands/" .. lib.custom.c2.command .. ".md"] ~= nil, "second file")
 end)
 
+test("u restores the template deleted a moment ago", function()
+	loadHost()
+	local cx = hostCx()
+	local state = hostDef.init(cx, {}, nil)
+	state.sel = "alpha"
+	hostDef.key(state, key("c"), cx)
+	hostDef.key(state, key("escape"), cx)
+	hostDef.key(state, key("d"), cx)
+	eq(count(library.read().custom), 0, "deleted")
+	ok(string.find(tostring(state.message), "u", 1, true) ~= nil, "message mentions undo")
+
+	hostDef.key(state, key("u"), cx)
+	local lib = library.read()
+	eq(count(lib.custom), 1, "restored")
+	eq(lib.custom.c1.name, "阿尔法", "same template")
+	eq(state.trash, nil, "trash emptied")
+	ok(fsFiles["C:/home/.omp/agent/commands/" .. lib.custom.c1.command .. ".md"] ~= nil, "command file back")
+
+	hostDef.key(state, key("u"), cx)
+	ok(string.find(tostring(state.message), "没有可撤回", 1, true) ~= nil, "nothing left to undo")
+end)
+
+test("only the latest delete can be undone", function()
+	loadHost()
+	local cx = hostCx()
+	local state = hostDef.init(cx, {}, nil)
+	state.sel = "alpha"
+	hostDef.key(state, key("c"), cx)
+	hostDef.key(state, key("escape"), cx)
+	hostDef.key(state, key("d"), cx)
+
+	state.sel = "beta"
+	hostDef.key(state, key("c"), cx)
+	hostDef.key(state, key("escape"), cx)
+	hostDef.key(state, key("d"), cx)
+
+	hostDef.key(state, key("u"), cx)
+	local lib = library.read()
+	eq(count(lib.custom), 1, "one back")
+	eq(lib.custom.c2.name, "贝塔", "the newer delete came back")
+end)
+
+test("deleting a preset leaves nothing to undo", function()
+	loadHost()
+	local cx = hostCx()
+	local state = hostDef.init(cx, {}, nil)
+	state.sel = "alpha"
+	hostDef.key(state, key("d"), cx)
+	eq(state.trash, nil, "no trash")
+	ok(string.find(tostring(state.message), "预制模板不能删除", 1, true) ~= nil, "explains why")
+end)
+
+test("the undo button only shows when there is something to undo", function()
+	loadHost()
+	local cx = hostCx()
+	local state = hostDef.init(cx, {}, nil)
+	local function hasUndo(): boolean
+		for _, b in ipairs(dockButtons(state, cx)) do
+			if b.act == "undo" then
+				return true
+			end
+		end
+		return false
+	end
+	eq(hasUndo(), false, "hidden at first")
+	state.sel = "alpha"
+	hostDef.key(state, key("c"), cx)
+	hostDef.key(state, key("escape"), cx)
+	hostDef.key(state, key("d"), cx)
+	eq(hasUndo(), true, "shown after a delete")
+end)
+
 test("dock buttons run the same actions as the keys", function()
 	loadHost()
 	local cx = hostCx()

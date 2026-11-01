@@ -52,6 +52,10 @@ _Avoid_: inject、paste、注入、粘贴、应用（当实现动词）
 把 Prompt Template 的正文复制到剪贴板。
 _Avoid_: apply、应用
 
+**Undo Delete**:
+撤回最近一次删除的 Custom Template，连同它的命令文件；一次只留一条。
+_Avoid_: 恢复（当动作）、回收站
+
 **Hide Presets**:
 一个开关：让全部 Preset Template 退出面板展示与命令绑定。关闭时它们照常回来。
 _Avoid_: 隐藏（当动作）、屏蔽列表

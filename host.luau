@@ -50,6 +50,8 @@ type State = {
 	preview: boolean,
 	query: field.Field,
 	draft: Draft?,
+	-- 刚删掉的自定义模板，留一个位置给撤回。
+	trash: templates.CustomTemplate?,
 	message: string?,
 }
 
@@ -259,11 +261,30 @@ local function deleteTemplate(state: State, t: templates.Template)
 		state.message = "预制模板不能删除，可以屏蔽"
 		return
 	end
+	state.trash = util.deepCopy(state.lib.custom[t.id])
 	state.lib.custom[t.id] = nil
 	state.lib.hidden[t.id] = nil
 	local changed, skipped = persist(state)
 	state.sel = nil
-	state.message = withSync("已删除 " .. t.name, changed, skipped)
+	state.message = withSync("已删除 " .. t.name .. "，按 u 撤回", changed, skipped)
+end
+
+--- 撤回最近一次删除。
+local function undoDelete(state: State)
+	local t = state.trash
+	if not t then
+		state.message = "没有可撤回的删除"
+		return
+	end
+	if state.lib.custom[t.id] then
+		state.message = "同 id 的模板已存在，撤回跳过"
+		return
+	end
+	state.lib.custom[t.id] = t
+	state.trash = nil
+	state.sel = t.id
+	local changed, skipped = persist(state)
+	state.message = withSync("已恢复 " .. t.name, changed, skipped)
 end
 
 local function toggleHidden(state: State, t: templates.Template)
@@ -515,6 +536,28 @@ local function actionButton(text: string, keys: { string }, variant: string, act
 	return node
 end
 
+--- 第二排按钮：有东西可撤回时最前面多一个撤回按钮。
+local function toolRow(state: State): { Node }
+	local out: { Node } = {}
+	if state.trash then
+		table.insert(out, actionButton("撤回删除", { "u" }, "default", "undo"))
+	end
+	for _, b in ipairs({
+		actionButton("范围", { "f" }, "quiet", "scope"),
+		actionButton("标签", { "l" }, "quiet", "label"),
+		actionButton("搜索", { "/" }, "quiet", "search"),
+		actionButton("预览", { "Space" }, "quiet", "preview"),
+		actionButton("屏蔽", { "h" }, "quiet", "hide"),
+		actionButton("全部屏蔽", { "Shift+H" }, "danger", "hideall"),
+		actionButton("含已屏蔽", { "v" }, "quiet", "showhidden"),
+		actionButton("同步命令", { "r" }, "quiet", "sync"),
+		actionButton("重置次数", { "Shift+R" }, "danger", "reset"),
+	}) do
+		table.insert(out, b)
+	end
+	return out
+end
+
 local function dockView(state: State): Node
 	if state.mode == "edit" then
 		local editRows: { Node } = {
@@ -539,17 +582,7 @@ local function dockView(state: State): Node
 			actionButton("新建", { "n" }, "default", "new"),
 			actionButton("删除", { "d" }, "danger", "delete"),
 		}),
-		ui.row({
-			actionButton("范围", { "f" }, "quiet", "scope"),
-			actionButton("标签", { "l" }, "quiet", "label"),
-			actionButton("搜索", { "/" }, "quiet", "search"),
-			actionButton("预览", { "Space" }, "quiet", "preview"),
-			actionButton("屏蔽", { "h" }, "quiet", "hide"),
-			actionButton("全部屏蔽", { "Shift+H" }, "danger", "hideall"),
-			actionButton("含已屏蔽", { "v" }, "quiet", "showhidden"),
-			actionButton("同步命令", { "r" }, "quiet", "sync"),
-			actionButton("重置次数", { "Shift+R" }, "danger", "reset"),
-		}),
+		ui.row(toolRow(state)),
 	}
 	if state.mode == "search" then
 		table.insert(rows, ui.text({ ui.span("搜索中：输入关键字，Esc 或 Enter 回到列表", "accent") }))
@@ -625,6 +658,8 @@ local function runAction(state: State, act: string, cx: BlockCx): boolean
 	elseif act == "sync" then
 		local changed, skipped = persist(state)
 		state.message = withSync("命令文件已同步", changed, skipped)
+	elseif act == "undo" then
+		undoDelete(state)
 	elseif act == "reset" then
 		resetUsage(state)
 	else
@@ -691,6 +726,8 @@ local function browseKey(state: State, key: Key, cx: BlockCx): boolean?
 		runAction(state, "sync", cx)
 	elseif k == "R" then
 		runAction(state, "reset", cx)
+	elseif k == "u" then
+		runAction(state, "undo", cx)
 	elseif k == "/" then
 		runAction(state, "search", cx)
 	else
@@ -762,6 +799,7 @@ tern.block.define("prompts", {
 			preview = true,
 			query = field.new(""),
 			draft = nil,
+			trash = nil,
 			message = nil,
 		}
 		if type(saved) == "table" then
