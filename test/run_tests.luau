@@ -554,10 +554,10 @@ end)
 
 local hostDef: any = nil
 
-local function hostCx(): any
+local function hostCx(cols: number?): any
 	return {
 		pane = 1,
-		cols = 100,
+		cols = cols or 100,
 		rows = 40,
 		copy = function(_self: any, text: string)
 			table.insert(copied, text)
@@ -992,6 +992,25 @@ test("every shortcut is a button that carries its key", function()
 	eq(byAct.submit.keys[1], "a", "submit key")
 	eq(byAct.reset.keys[1], "Shift+R", "reset key")
 	eq(byAct.preview.keys[1], "Space", "preview key")
+end)
+
+test("a narrow pane wraps the buttons instead of clipping them", function()
+	loadHost()
+	local wide = hostCx(100)
+	local narrow = hostCx(36)
+	local state = hostDef.init(narrow, {}, nil)
+	local function rowCount(cx: any): number
+		local view = hostDef.view(state, cx)
+		local n = 0
+		for _, child in ipairs(view.dock.c or {}) do
+			if child.k == "row" then
+				n += 1
+			end
+		end
+		return n
+	end
+	eq(#dockButtons(state, narrow), #dockButtons(state, wide), "every button is still there")
+	ok(rowCount(narrow) > rowCount(wide), "narrow pane uses more rows")
 end)
 
 test("the editor dock offers save and cancel", function()

@@ -527,63 +527,110 @@ local function editView(state: State): Node
 	return ui.col(kids)
 end
 
+--- 一个字符串在终端里占几格（CJK 算两格）。
+local function cells(s: string): number
+	local n = 0
+	for _, cp in utf8.codes(s) do
+		n += if cp > 0x7E then 2 else 1
+	end
+	return n
+end
+
 --- 一个可点的按钮；keys 会画成键帽。
-local function actionButton(text: string, keys: { string }, variant: string, act: string): Node
-	local node = ui.button(text, { keys = keys, variant = variant, size = "sm" })
+local function actionButton(spec: any): Node
+	local node = ui.button(spec.text, { keys = spec.keys, variant = spec.variant, size = "sm" })
 	local p: { [string]: any } = node.p or {}
-	p.actions = { click = act }
+	p.actions = { click = spec.act }
 	node.p = p
 	return node
 end
 
---- 第二排按钮：有东西可撤回时最前面多一个撤回按钮。
-local function toolRow(state: State): { Node }
-	local out: { Node } = {}
-	if state.trash then
-		table.insert(out, actionButton("撤回删除", { "u" }, "default", "undo"))
+--- 按钮的宽度估算：文案 + 键帽 + 内边距。估高一点比裁切安全。
+local function buttonCells(spec: any): number
+	local key = spec.keys[1] or ""
+	-- 键帽里的方向键、车/退格等只占一格。
+	local keyCells = if #key <= 2 then 1 else math.min(cells(key) + 1, 9)
+	return cells(spec.text) + keyCells + 4
+end
+
+--- 把按钮按 pane 宽度折成好几排：窄了就多一排，不会被裁。
+local function packRows(specs: { any }, cols: number): { { Node } }
+	local out: { { Node } } = {}
+	local row: { Node } = {}
+	local used = 0
+	local limit = math.max(16, cols - 4)
+	for _, spec in ipairs(specs) do
+		local w = buttonCells(spec)
+		if #row > 0 and used + w > limit then
+			table.insert(out, row)
+			row = {}
+			used = 0
+		end
+		table.insert(row, actionButton(spec))
+		used += w
 	end
-	for _, b in ipairs({
-		actionButton("范围", { "f" }, "quiet", "scope"),
-		actionButton("标签", { "l" }, "quiet", "label"),
-		actionButton("搜索", { "/" }, "quiet", "search"),
-		actionButton("预览", { "Space" }, "quiet", "preview"),
-		actionButton("屏蔽", { "h" }, "quiet", "hide"),
-		actionButton("全部屏蔽", { "Shift+H" }, "danger", "hideall"),
-		actionButton("含已屏蔽", { "v" }, "quiet", "showhidden"),
-		actionButton("同步命令", { "r" }, "quiet", "sync"),
-		actionButton("重置次数", { "Shift+R" }, "danger", "reset"),
-	}) do
-		table.insert(out, b)
+	if #row > 0 then
+		table.insert(out, row)
 	end
 	return out
 end
 
-local function dockView(state: State): Node
+local function primaryButtons(): { any }
+	return {
+		{ text = "插入", keys = { "Enter" }, variant = "primary", act = "insert" },
+		{ text = "提交给 agent", keys = { "a" }, variant = "default", act = "submit" },
+		{ text = "编辑", keys = { "e" }, variant = "default", act = "edit" },
+		{ text = "复制为自定义", keys = { "c" }, variant = "default", act = "copy" },
+		{ text = "新建", keys = { "n" }, variant = "default", act = "new" },
+		{ text = "删除", keys = { "d" }, variant = "danger", act = "delete" },
+	}
+end
+
+--- 第二组：有东西可撤回时最前面多一个撤回。
+local function toolButtons(state: State): { any }
+	local out: { any } = {}
+	if state.trash then
+		table.insert(out, { text = "撤回删除", keys = { "u" }, variant = "default", act = "undo" })
+	end
+	for _, spec in ipairs({
+		{ text = "范围", keys = { "f" }, variant = "quiet", act = "scope" },
+		{ text = "标签", keys = { "l" }, variant = "quiet", act = "label" },
+		{ text = "搜索", keys = { "/" }, variant = "quiet", act = "search" },
+		{ text = "预览", keys = { "Space" }, variant = "quiet", act = "preview" },
+		{ text = "屏蔽", keys = { "h" }, variant = "quiet", act = "hide" },
+		{ text = "全部屏蔽", keys = { "Shift+H" }, variant = "danger", act = "hideall" },
+		{ text = "含已屏蔽", keys = { "v" }, variant = "quiet", act = "showhidden" },
+		{ text = "同步命令", keys = { "r" }, variant = "quiet", act = "sync" },
+		{ text = "重置次数", keys = { "Shift+R" }, variant = "danger", act = "reset" },
+	}) do
+		table.insert(out, spec)
+	end
+	return out
+end
+
+--- 把一组按钮按宽度铺成若干排。
+local function rowsOf(specs: { any }, cols: number, out: { Node })
+	for _, row in ipairs(packRows(specs, cols)) do
+		table.insert(out, ui.row(row))
+	end
+end
+
+local function dockView(state: State, cx: BlockCx): Node
+	local rows: { Node } = {}
 	if state.mode == "edit" then
-		local editRows: { Node } = {
-			ui.row({
-				actionButton("保存", { "Enter" }, "primary", "save"),
-				actionButton("取消", { "Esc" }, "quiet", "cancel"),
-				ui.text({ ui.span("Shift+Enter 正文换行 · Tab 切换字段", "dim") }),
-			}),
-		}
+		rowsOf({
+			{ text = "保存", keys = { "Enter" }, variant = "primary", act = "save" },
+			{ text = "取消", keys = { "Esc" }, variant = "quiet", act = "cancel" },
+		}, cx.cols, rows)
+		table.insert(rows, ui.text({ ui.span("Shift+Enter 正文换行 · Tab 切换字段", "dim") }))
 		if state.message then
-			table.insert(editRows, ui.text({ ui.span(state.message, "warning") }))
+			table.insert(rows, ui.text({ ui.span(state.message, "warning") }))
 		end
-		return ui.col(editRows)
+		return ui.col(rows)
 	end
 
-	local rows: { Node } = {
-		ui.row({
-			actionButton("插入", { "Enter" }, "primary", "insert"),
-			actionButton("提交给 agent", { "a" }, "default", "submit"),
-			actionButton("编辑", { "e" }, "default", "edit"),
-			actionButton("复制为自定义", { "c" }, "default", "copy"),
-			actionButton("新建", { "n" }, "default", "new"),
-			actionButton("删除", { "d" }, "danger", "delete"),
-		}),
-		ui.row(toolRow(state)),
-	}
+	rowsOf(primaryButtons(), cx.cols, rows)
+	rowsOf(toolButtons(state), cx.cols, rows)
 	if state.mode == "search" then
 		table.insert(rows, ui.text({ ui.span("搜索中：输入关键字，Esc 或 Enter 回到列表", "accent") }))
 	end
@@ -821,7 +868,7 @@ tern.block.define("prompts", {
 
 	view = function(state: State, cx: BlockCx): BlockView
 		local main = if state.mode == "edit" then editView(state) else browseView(state, cx)
-		return { main = main, dock = dockView(state) }
+		return { main = main, dock = dockView(state, cx) }
 	end,
 
 	key = function(state: State, key: Key, cx: BlockCx): boolean?
