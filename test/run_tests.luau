@@ -980,6 +980,12 @@ local function windowCx(opts: any?): any
 			focused = function(): number?
 				return o.focused
 			end,
+			tab_of = function(): number?
+				return o.tab
+			end,
+			layout = function(): any?
+				return o.layout
+			end,
 		},
 		layout = { focus = function() end },
 		copy = function(_self: any, text: string)
@@ -1019,36 +1025,25 @@ test("the status formatter reports the template count", function()
 	eq(segments[1].command, "plugin.tern-prompt-panel.panel", "click opens the panel")
 end)
 
-test("the panel command opens the block and focuses an open one", function()
+test("the panel command always opens another panel", function()
 	loadWindow()
 	local opened = 0
-	local focused = 0
-	local cx = windowCx({ panes = { { pane = 1, program = "shell" } } })
+	local cx = windowCx({ panes = { { pane = 1, program = "codex" } } })
 	cx.new_block = function(): number?
 		opened += 1
 		return 2
 	end
 	commands.panel.run(cx)
-	eq(opened, 1, "block opened")
+	eq(opened, 1, "first panel")
 
-	local cx2 = windowCx({ panes = { { pane = 1, program = "shell" }, { pane = 2, program = "tern-prompt-panel.prompts" } } })
-	cx2.layout.focus = function()
-		focused += 1
-	end
-	commands.panel.run(cx2)
-	eq(opened, 1, "no second block")
-	eq(focused, 1, "existing block focused")
-
-	-- 面板崩过之后的死 pane 不能再被聚焦：要重开一个。
-	local cx3 = windowCx({
-		panes = { { pane = 1, program = "shell" }, { pane = 2, block = "tern-prompt-panel.prompts", exited = 1 } },
-	})
-	cx3.new_block = function(): number?
+	-- 已经有一个开着的面板，也要再开一个：一个 agent 旁边一个。
+	local cx2 = windowCx({ panes = { { pane = 1, program = "codex" }, { pane = 2, block = "tern-prompt-panel.prompts" } } })
+	cx2.new_block = function(): number?
 		opened += 1
 		return 3
 	end
-	commands.panel.run(cx3)
-	eq(opened, 2, "dead pane replaced")
+	commands.panel.run(cx2)
+	eq(opened, 2, "second panel")
 end)
 
 test("an insert action types the body into the agent composer", function()
@@ -1071,6 +1066,62 @@ test("a multi-line insert is wrapped as a bracketed paste", function()
 	handlers.focus({}, cx)
 	pump(cx)
 	eq(typed[1].text, "\27[200~line1\nline2\27[201~", "wrapped")
+end)
+
+test("a panel sends to the agent beside it, not the focused one", function()
+	loadWindow()
+	kvStore.action = { seq = 82, kind = "insert", pane = 2, body = "x", name = "n" }
+	local tree = { split = "right", [1] = { pane = 1 }, [2] = { pane = 2 } }
+	local cx = windowCx({
+		agents = { { pane = 1, state = "idle" }, { pane = 9, state = "idle" } },
+		focused = 9,
+		tab = 4,
+		layout = { tab = 4, root = tree, floats = {}, zoomed = false, focus = 2 },
+	})
+	handlers.focus({}, cx)
+	pump(cx)
+	eq(#typed, 1, "typed once")
+	eq(typed[1].pane, 1, "the neighbour, not the focused agent")
+end)
+
+test("two panels each target their own neighbour", function()
+	loadWindow()
+	local tree = {
+		split = "right",
+		[1] = { split = "down", [1] = { pane = 1 }, [2] = { pane = 2 } },
+		[2] = { split = "down", [1] = { pane = 4 }, [2] = { pane = 3 } },
+	}
+	local layout = { tab = 4, root = tree, floats = {}, zoomed = false, focus = 2 }
+	local agents = { { pane = 1, state = "idle" }, { pane = 4, state = "idle" } }
+
+	kvStore.action = { seq = 83, kind = "insert", pane = 2, body = "a", name = "A" }
+	local cx = windowCx({
+		panes = { { pane = 1, program = "codex" }, { pane = 2, block = "tern-prompt-panel.prompts" } },
+		agents = agents,
+		focused = 1,
+		tab = 4,
+		layout = layout,
+	})
+	pump(cx)
+	eq(typed[1].pane, 1, "left panel to the left agent")
+
+	kvStore.action = { seq = 84, kind = "insert", pane = 3, body = "b", name = "B" }
+	pump(cx)
+	eq(typed[2].pane, 4, "right panel to the right agent")
+end)
+
+test("a panel alone in its tab falls back to the focused agent", function()
+	loadWindow()
+	kvStore.action = { seq = 85, kind = "insert", pane = 2, body = "x", name = "n" }
+	local cx = windowCx({
+		agents = { { pane = 9, state = "idle" } },
+		focused = 9,
+		tab = 4,
+		layout = { tab = 4, root = { pane = 2 }, floats = {}, zoomed = false, focus = 2 },
+	})
+	handlers.focus({}, cx)
+	pump(cx)
+	eq(typed[1].pane, 9, "focused agent")
 end)
 
 test("a plugin pane is recognized by its block kind", function()

@@ -16,8 +16,6 @@ local POLL_MS = 300
 
 -- 最近聚焦的 omp agent：面板没有绑定目标时的兜底。
 local lastAgent: number? = nil
--- 面板 pane -> 提交目标 agent pane（面板打开时聚焦的那个 omp agent）。
-local targets: { [number]: number } = {}
 -- 已经处理过的请求序号，避免重复提交。
 local seenSeq = 0
 
@@ -68,23 +66,12 @@ local function isPanel(pane: any): boolean
 	return pane.block == KIND or pane.program == KIND
 end
 
---- 打开面板；已经开着就聚焦它。
+--- 打开一个新面板：每个面板自己找旁边的 agent。
 local function openPanel(cx: WindowCx)
 	rememberAgent(cx)
-	for _, pane in ipairs(cx.session:panes()) do
-		if isPanel(pane) then
-			cx.layout:focus(pane.pane)
-			return
-		end
-	end
-	local agent = lastAgent
 	local pane = cx:new_block(KIND, nil, "beside")
 	if pane == nil then
 		cx:toast("error", "提示词面板没有加载", "把插件装在运行面板的机器上。")
-		return
-	end
-	if agent then
-		targets[pane] = agent
 	end
 end
 
@@ -94,6 +81,67 @@ local function pasteText(body: string): string
 		return "\27[200~" .. body .. "\27[201~"
 	end
 	return body
+end
+
+--- 切分树里目标 pane 的同胞子树，由近到远；目标不在树里时返回 nil。
+local function siblingsOf(tree: any, target: number): { any }?
+	if type(tree) ~= "table" then
+		return nil
+	end
+	if tree.pane == target then
+		return {}
+	end
+	for i = 1, #tree do
+		local inner = siblingsOf(tree[i], target)
+		if inner then
+			local out: { any } = {}
+			for _, s in ipairs(inner) do
+				table.insert(out, s)
+			end
+			for j = 1, #tree do
+				if j ~= i and tree[j] then
+					table.insert(out, tree[j])
+				end
+			end
+			return out
+		end
+	end
+	return nil
+end
+
+--- 一棵子树里的全部 pane，按树的顺序。
+local function panesIn(tree: any, out: { number }): { number }
+	if type(tree) ~= "table" then
+		return out
+	end
+	if tree.pane then
+		table.insert(out, tree.pane)
+	end
+	for i = 1, #tree do
+		panesIn(tree[i], out)
+	end
+	return out
+end
+
+--- 面板自己旁边的 agent：同 tab 的切分树里离它最近的 agent 块。
+local function agentFor(cx: WindowCx, panelPane: number): number?
+	local tab = cx.session:tab_of(panelPane)
+	local layout = if tab then cx.session:layout(tab) else nil
+	if not layout then
+		return nil
+	end
+	local agents: { [number]: boolean } = {}
+	for _, a in ipairs(cx.agents:list()) do
+		agents[a.pane] = true
+	end
+	for _, sub in ipairs(siblingsOf(layout.root, panelPane) or {}) do
+		for _, id in ipairs(panesIn(sub, {})) do
+			if agents[id] then
+				return id
+			end
+		end
+	end
+	return nil
 end
 
 --- 把正文发给某个 omp agent。出错时返回错误说明。
@@ -169,8 +217,8 @@ local function handleAction(cx: WindowCx)
 	if type(action.body) ~= "string" then
 		return
 	end
-	local pane = action.pane
-	local agent = (if type(pane) == "number" then targets[pane] else nil) or lastAgent or agentPaneOf(cx)
+	local pane = if type(action.pane) == "number" then action.pane else nil
+	local agent = (if pane then agentFor(cx, pane) else nil) or lastAgent or agentPaneOf(cx)
 	if not agent then
 		cx:toast("info", "没有聚焦的 omp agent", "正文已复制，可以直接粘贴。")
 		return
@@ -237,10 +285,6 @@ end)
 
 tern.on("focus", function(_ev, cx)
 	rememberAgent(cx)
-end)
-
-tern.on("pane_closed", function(ev, _cx)
-	targets[ev.pane] = nil
 end)
 
 -- 窗口重启后第一次看到的请求当作已处理，避免重复提交。
