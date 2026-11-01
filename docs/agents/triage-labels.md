@@ -12,4 +12,4 @@
 
 当技能提到某个角色时（例如"应用 AFK-ready 分类标签"），请使用本表中对应的标签字符串。
 
-以上五个标签已在 GitHub 仓库 `meisijiya/mstack` 中创建。要改词汇时，改这张表并在仓库里同步 `gh label create`。
+以上五个标签已在 GitHub 仓库 `meisijiya/tern-prompt-panel` 中创建。要改词汇时，改这张表并在仓库里同步 `gh label create`。

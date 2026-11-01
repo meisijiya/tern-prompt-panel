@@ -1,0 +1,5 @@
+# luau 拼接产物
+test/.bundle.luau
+
+# 截图与本地构建产物
+target/

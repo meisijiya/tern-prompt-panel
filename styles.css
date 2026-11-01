@@ -1,0 +1,31 @@
+/* 提示词面板的排版。主题负责颜色，这里只管间距与层次。 */
+
+.sf-main[data-surface='plugin.tern-prompt-panel.prompts'] .sf-list {
+	border-radius: 6px;
+}
+
+.sf-main[data-surface='plugin.tern-prompt-panel.prompts'] .sf-item {
+	padding-top: 3px;
+	padding-bottom: 3px;
+}
+
+/* 命令名靠右显示，等宽字体方便对齐。 */
+.sf-main[data-surface='plugin.tern-prompt-panel.prompts'] .sf-item-value {
+	font-family: var(--mono);
+	font-size: 12px;
+	opacity: 0.75;
+}
+
+/* 搜索框与列表之间留一点空隙。 */
+.sf-main[data-surface='plugin.tern-prompt-panel.prompts'] .sf-editor {
+	margin-bottom: 6px;
+}
+
+/* 底部操作栏：徽标之间拉开一点，按键说明更暗。 */
+.sf-dock[data-surface='plugin.tern-prompt-panel.prompts'] .sf-badge {
+	margin-right: 4px;
+}
+
+.sf-dock[data-surface='plugin.tern-prompt-panel.prompts'] .sf-t-dim {
+	opacity: 0.7;
+}

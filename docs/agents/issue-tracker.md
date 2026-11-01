@@ -1,6 +1,6 @@
 # Issue 跟踪器：GitHub
 
-本仓库的 issue 和 spec 以 GitHub issue 的形式存在，仓库是 `meisijiya/mstack`。所有操作都使用 `gh` CLI。
+本仓库的 issue 和 spec 以 GitHub issue 的形式存在，仓库是 `meisijiya/tern-prompt-panel`。所有操作都使用 `gh` CLI。
 
 ## 约定
 
@@ -16,7 +16,7 @@
 
 从 `git remote -v` 推断仓库——在克隆内运行时 `gh` 会自动这么做。
 
-只在用户自己的 repo 中创建 issue。除非用户拥有 `mattpocock/skills`，否则绝不要向该仓库创建 issue。本仓库没有 fork 父仓库，但每次会话首次运行 `gh issue create` 前，仍先用 `gh repo view --json nameWithOwner` 确认目标是 `meisijiya/mstack`；如果不是，先向用户确认。
+只在用户自己的 repo 中创建 issue。除非用户拥有 `mattpocock/skills`，否则绝不要向该仓库创建 issue。本仓库没有 fork 父仓库，但每次会话首次运行 `gh issue create` 前，仍先用 `gh repo view --json nameWithOwner` 确认目标是 `meisijiya/tern-prompt-panel`；如果不是，先向用户确认。
 
 ## 把拉取请求作为分类入口
 

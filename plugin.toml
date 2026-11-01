@@ -1,0 +1,17 @@
+schema = 1
+id = "tern-prompt-panel"
+name = "Prompt Panel"
+version = "0.1.0"
+description = "提示词管理面板：预制与自定义模板可视化增删改查，并绑定为 omp 命令。"
+icon = "prompt"
+
+host = "host.luau"
+window = "window.luau"
+
+styles = ["styles.css"]
+
+[[blocks]]
+id = "prompts"
+title = "提示词面板"
+icon = "prompt"
+palette = true
