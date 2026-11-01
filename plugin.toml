@@ -14,4 +14,4 @@ styles = ["styles.css"]
 id = "prompts"
 title = "提示词面板"
 icon = "prompt"
-palette = true
+palette = false

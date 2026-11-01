@@ -2,7 +2,7 @@
 
 ## 插件
 
-Tern 窗口插件。`host.luau` 是面板 block，`window.luau` 是命令与状态栏，`lib/` 放纯逻辑，
+Tern 窗口插件。`host.luau` 是面板 block，`window.luau` 是命令与状态栏，`lib/` 放不碰 UI 的逻辑，
 `presets/*.md` 是只读的预制模板；`tern.d.luau` 由 `tern plugin types .` 生成，勿手改。
 
 - 测试：`test/build.sh [luau 路径]`。luau 的 require 在独立沙箱里跑，所以脚本把桩、`lib/`、

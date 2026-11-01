@@ -1038,6 +1038,17 @@ test("the panel command opens the block and focuses an open one", function()
 	commands.panel.run(cx2)
 	eq(opened, 1, "no second block")
 	eq(focused, 1, "existing block focused")
+
+	-- 面板崩过之后的死 pane 不能再被聚焦：要重开一个。
+	local cx3 = windowCx({
+		panes = { { pane = 1, program = "shell" }, { pane = 2, block = "tern-prompt-panel.prompts", exited = 1 } },
+	})
+	cx3.new_block = function(): number?
+		opened += 1
+		return 3
+	end
+	commands.panel.run(cx3)
+	eq(opened, 2, "dead pane replaced")
 end)
 
 test("an insert action types the body into the agent composer", function()
@@ -1051,6 +1062,15 @@ test("an insert action types the body into the agent composer", function()
 	eq(typed[1].text, "正文 A", "body typed")
 	eq(#asked, 0, "not submitted")
 	eq(toasts[1].level, "success", "toast")
+end)
+
+test("a multi-line insert is wrapped as a bracketed paste", function()
+	loadWindow()
+	kvStore.action = { seq = 81, kind = "insert", pane = 2, body = "line1\nline2", name = "x" }
+	local cx = windowCx({ agents = { { pane = 9, state = "idle" } }, focused = 9 })
+	handlers.focus({}, cx)
+	pump(cx)
+	eq(typed[1].text, "\27[200~line1\nline2\27[201~", "wrapped")
 end)
 
 test("a plugin pane is recognized by its block kind", function()

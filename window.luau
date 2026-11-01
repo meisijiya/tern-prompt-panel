@@ -60,8 +60,11 @@ local function refreshSummary()
 	tern.chrome.refresh()
 end
 
---- 这个 pane 是不是面板块：窗口侧的块只在 block 里报插件 kind，program 只给终端/agent。
+--- 这个 pane 是不是活着的面板块：窗口侧的块只在 block 里报插件 kind，program 只给终端/agent。
 local function isPanel(pane: any): boolean
+	if pane.exited ~= nil then
+		return false
+	end
 	return pane.block == KIND or pane.program == KIND
 end
 
@@ -83,6 +86,14 @@ local function openPanel(cx: WindowCx)
 	if agent then
 		targets[pane] = agent
 	end
+end
+
+--- 多行正文包成括号粘贴：omp 的输入框会整段粘进去，不会在第一个换行处提交。
+local function pasteText(body: string): string
+	if string.find(body, "\n", 1, true) then
+		return "\27[200~" .. body .. "\27[201~"
+	end
+	return body
 end
 
 --- 把正文发给某个 omp agent。出错时返回错误说明。
@@ -166,7 +177,7 @@ local function handleAction(cx: WindowCx)
 	end
 	if action.kind == "insert" then
 		local ok2 = pcall(function()
-			cx:run(agent, action.body)
+			cx:run(agent, pasteText(action.body))
 		end)
 		if ok2 then
 			cx:toast("success", "已插入：" .. tostring(action.name))
