@@ -188,16 +188,4 @@ function M.stripCursor(s: string): string
 	return (s:gsub("{{cursor}}", ""))
 end
 
---- 第一个 {{cursor}} 之前的正文；没有标记时返回整个串。
-function M.beforeCursor(s: string): string
-	local head = string.match(s, "^(.-){{cursor}}")
-	return head or s
-end
-
---- 第一个 {{cursor}} 之后的正文；没有标记时返回空串。
-function M.afterCursor(s: string): string
-	local tail = string.match(s, "{{cursor}}(.*)$")
-	return tail or ""
-end
-
 return M

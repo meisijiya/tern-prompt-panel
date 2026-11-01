@@ -6,7 +6,6 @@
 --
 -- 只有宿主半边写库；窗口半边只读。
 
-local catalog = require("./lib/catalog")
 local library = require("./lib/library")
 local templates = require("./lib/templates")
 local util = require("./lib/util")
@@ -24,11 +23,7 @@ local seenSeq = 0
 
 --- 面板的全部模板（预制 + 自定义），与面板里看到的一致。
 local function allTemplates(): { templates.Template }
-	local lib = library.read()
-	return templates.merge(catalog.load(), lib.custom, lib.usage, {
-		hideAllPresets = lib.hideAllPresets,
-		hidden = lib.hidden,
-	})
+	return library.templates(library.read())
 end
 
 -- 状态栏用的计数。加载时先算一次，首帧就是对的；之后由轮询更新。
@@ -149,7 +144,7 @@ local function quickInsert(cx: WindowCx)
 	end)
 end
 
---- 执行宿主半边请求的提交。
+--- 执行宿主半边请求的动作：insert 打进输入框，submit 直接提交。
 local function handleAction(cx: WindowCx)
 	local ok, action = pcall(tern.kv.get, ACTION_KEY)
 	if not ok or type(action) ~= "table" then
@@ -160,13 +155,27 @@ local function handleAction(cx: WindowCx)
 		return
 	end
 	seenSeq = seq
-	if action.kind ~= "submit" or type(action.body) ~= "string" then
+	if type(action.body) ~= "string" then
 		return
 	end
 	local pane = action.pane
 	local agent = (if type(pane) == "number" then targets[pane] else nil) or lastAgent or agentPaneOf(cx)
 	if not agent then
-		cx:toast("info", "没有聚焦的 omp agent", "先点一下 omp 面板再提交。")
+		cx:toast("info", "没有聚焦的 omp agent", "正文已复制，可以直接粘贴。")
+		return
+	end
+	if action.kind == "insert" then
+		local ok2 = pcall(function()
+			cx:run(agent, action.body)
+		end)
+		if ok2 then
+			cx:toast("success", "已插入：" .. tostring(action.name))
+		else
+			cx:toast("error", "插入失败", "正文已复制，可以直接粘贴。")
+		end
+		return
+	end
+	if action.kind ~= "submit" then
 		return
 	end
 	local err = sendToAgent(cx, agent, action.body)

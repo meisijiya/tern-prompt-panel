@@ -21,6 +21,7 @@ local chromeRefreshes = 0
 local handlers: { [string]: (any, any) -> any } = {}
 local blockDefs: { [string]: any } = {}
 local asked: { { pane: number, text: string } } = {}
+local typed: { { pane: number, text: string } } = {}
 
 local function copy(v: any): any
 	if type(v) ~= "table" then
@@ -131,6 +132,14 @@ local ternStub = {
 		badge = function(t: string, tone: string): any
 			return { k = "badge", p = { t = t, tone = tone } }
 		end,
+		button = function(t: string?, props: any?): any
+			local p: { [string]: any } = props or {}
+			p.t = t
+			return { k = "button", p = p }
+		end,
+		md = function(text: string): any
+			return { k = "md", p = { text = text } }
+		end,
 		node = function(kind: string, props: any?): any
 			return { k = kind, p = props or {} }
 		end,
@@ -154,6 +163,7 @@ local function reset()
 	timers = {}
 	chromeRefreshes = 0
 	asked = {}
+	typed = {}
 	for path, text in pairs(PRESETS) do
 		fsFiles[path] = text
 		fsDirs["presets"] = true
@@ -302,9 +312,9 @@ test("parsePreset needs an id and a name", function()
 	eq(templates.parsePreset("no frontmatter"), nil)
 end)
 
-test("defaultCommand prefers the English name", function()
+test("commandName prefers the English name", function()
 	local t = templates.parsePreset(PRESETS["presets/alpha.md"]) :: any
-	eq(templates.defaultCommand(t), "prompt-alpha")
+	eq(templates.commandName(t), "prompt-alpha")
 end)
 
 test("merge applies usage and hidden flags", function()
@@ -432,15 +442,15 @@ test("write then read round-trips the library", function()
 end)
 
 test("validCommandName only takes a safe file name", function()
-	eq(library.validCommandName("prompt-a_1"), true)
-	eq(library.validCommandName("Prompt"), false)
-	eq(library.validCommandName("-x"), false)
-	eq(library.validCommandName("a b"), false)
+	eq(templates.validCommandName("prompt-a_1"), true)
+	eq(templates.validCommandName("Prompt"), false)
+	eq(templates.validCommandName("-x"), false)
+	eq(templates.validCommandName("a b"), false)
 end)
 
 test("defaultCommand slugs the name", function()
-	eq(library.defaultCommand("MECE 拆解"), "prompt-mece")
-	eq(library.defaultCommand("中文"), "")
+	eq(templates.suggestCommand("MECE 拆解"), "prompt-mece")
+	eq(templates.suggestCommand("中文"), "")
 end)
 
 -- ------------------------------------------------------------- ompcmd ----
@@ -473,17 +483,13 @@ end)
 
 -- ---------------------------------------------------------------- sync ----
 
-local function merged(overrides: any?): { templates.Template }
-	local lib = library.read()
-	return templates.merge(catalog.load(), lib.custom, lib.usage, {
-		hideAllPresets = lib.hideAllPresets,
-		hidden = lib.hidden,
-	})
+local function merged(): { templates.Template }
+	return library.templates(library.read())
 end
 
 test("sync writes one command file per visible template", function()
 	local lib = library.empty()
-	local changed = sync.sync(lib, merged())
+	local changed = select(1, sync.sync(lib, merged()))
 	eq(changed, true, "changed")
 	eq(fsFiles["C:/home/.omp/agent/commands/prompt-alpha.md"] ~= nil, true, "alpha file")
 	eq(fsFiles["C:/home/.omp/agent/commands/prompt-beta.md"] ~= nil, true, "beta file")
@@ -493,7 +499,7 @@ end)
 test("sync reports no change when files already match", function()
 	local lib = library.empty()
 	sync.sync(lib, merged())
-	eq(sync.sync(lib, merged()), false, "second pass")
+	eq(select(1, sync.sync(lib, merged())), false, "second pass")
 end)
 
 test("sync removes the file of a hidden template", function()
@@ -503,7 +509,7 @@ test("sync removes the file of a hidden template", function()
 	library.write(lib)
 
 	local again = library.read()
-	local changed = sync.sync(again, merged())
+	local changed = select(1, sync.sync(again, merged()))
 	eq(changed, true, "changed")
 	eq(fsFiles["C:/home/.omp/agent/commands/prompt-alpha.md"], nil, "file removed")
 	eq(again.files.alpha, nil, "entry forgotten")
@@ -521,7 +527,7 @@ test("sync removes the old file when a command is renamed", function()
 	first.custom.c1.command = "new-name"
 	library.write(first)
 	local second = library.read()
-	eq(sync.sync(second, merged()), true, "changed")
+	eq(select(1, sync.sync(second, merged())), true, "changed")
 	eq(fsFiles["C:/home/.omp/agent/commands/old-name.md"], nil, "old file removed")
 	eq(fsFiles["C:/home/.omp/agent/commands/new-name.md"] ~= nil, true, "new file written")
 end)
@@ -531,6 +537,17 @@ test("sync leaves files it never wrote alone", function()
 	fsFiles["C:/home/.omp/agent/commands/hand-written.md"] = "mine"
 	sync.sync(lib, merged())
 	eq(fsFiles["C:/home/.omp/agent/commands/hand-written.md"], "mine", "foreign file kept")
+end)
+
+test("sync skips a hand-written file that shares a template's command", function()
+	local lib = library.empty()
+	local path = "C:/home/.omp/agent/commands/prompt-alpha.md"
+	fsFiles[path] = "手写的内容"
+	local changed, skipped = sync.sync(lib, merged())
+	eq(fsFiles[path], "手写的内容", "not overwritten")
+	eq(skipped, 1, "reported")
+	eq(lib.files.alpha, nil, "not claimed")
+	eq(changed, true, "the other files still changed")
 end)
 
 -- ------------------------------------------------------------ host half ----
@@ -559,6 +576,52 @@ local function loadHost()
 	ok(hostDef ~= nil, "host registers the prompts block")
 end
 
+--- 把一个区域里的文字拼出来（text 取 spans，md 取原文）。
+local function renderText(node: any?): string
+	if type(node) ~= "table" then
+		return ""
+	end
+	if node.k == "text" then
+		local out = ""
+		for _, part in ipairs(node.p.spans) do
+			out ..= if type(part) == "string" then part else part.t
+		end
+		return out
+	end
+	if node.k == "md" then
+		return node.p.text
+	end
+	local out = ""
+	for _, child in ipairs(node.c or {}) do
+		out ..= renderText(child)
+	end
+	return out
+end
+
+--- dock 里的按钮：文案、键帽、样式、动作。
+local function dockButtons(state: any, cx: any): { any }
+	local view = hostDef.view(state, cx)
+	local out: { any } = {}
+	local function walk(node: any)
+		if type(node) ~= "table" then
+			return
+		end
+		if node.k == "button" then
+			table.insert(out, {
+				text = node.p.t,
+				keys = node.p.keys,
+				variant = node.p.variant,
+				act = node.p.actions and node.p.actions.click,
+			})
+		end
+		for _, child in ipairs(node.c or {}) do
+			walk(child)
+		end
+	end
+	walk(view.dock)
+	return out
+end
+
 test("host init syncs the command files and starts in browse", function()
 	loadHost()
 	local cx = hostCx()
@@ -568,7 +631,7 @@ test("host init syncs the command files and starts in browse", function()
 	eq(hostDef.title(state), "提示词面板 (3)", "title")
 end)
 
-test("enter applies the selected template and counts the use", function()
+test("enter inserts the selected template and counts the use", function()
 	loadHost()
 	local cx = hostCx()
 	local state = hostDef.init(cx, {}, nil)
@@ -576,6 +639,8 @@ test("enter applies the selected template and counts the use", function()
 	hostDef.key(state, key("enter"), cx)
 	eq(copied[1], "正文 A", "copied body")
 	eq(library.read().usage.alpha, 1, "usage counted")
+	eq(kvStore.action.kind, "insert", "insert request")
+	eq(kvStore.action.body, "正文 A", "body sent")
 end)
 
 test("j and k move the selection", function()
@@ -796,15 +861,79 @@ test("two copies of the same template get different commands", function()
 	ok(fsFiles["C:/home/.omp/agent/commands/" .. lib.custom.c2.command .. ".md"] ~= nil, "second file")
 end)
 
-test("dock badges run the same actions as the keys", function()
+test("dock buttons run the same actions as the keys", function()
 	loadHost()
 	local cx = hostCx()
 	local state = hostDef.init(cx, {}, nil)
 	state.sel = "alpha"
-	hostDef.event(state, { ev = "action", act = "apply" }, cx)
-	eq(copied[1], "正文 A", "applied by badge")
+	hostDef.event(state, { ev = "action", act = "insert" }, cx)
+	eq(copied[1], "正文 A", "inserted by button")
 	hostDef.event(state, { ev = "action", act = "new" }, cx)
-	eq(state.mode, "edit", "editor opened by badge")
+	eq(state.mode, "edit", "editor opened by button")
+end)
+
+test("the preview shows the selected body and space hides it", function()
+	loadHost()
+	local cx = hostCx()
+	local state = hostDef.init(cx, {}, nil)
+	state.sel = "alpha"
+	local view = hostDef.view(state, cx)
+	ok(string.find(renderText(view.main), "正文 A", 1, true) ~= nil, "body previewed")
+
+	hostDef.key(state, key("space"), cx)
+	eq(state.preview, false, "preview off")
+	local compact = hostDef.view(state, cx)
+	ok(string.find(renderText(compact.main), "正文 A", 1, true) == nil, "body hidden")
+end)
+
+test("R resets every usage count", function()
+	loadHost()
+	local cx = hostCx()
+	local lib = library.read()
+	lib.usage.alpha = 4
+	lib.usage.beta = 2
+	library.write(lib)
+
+	local state = hostDef.init(cx, {}, nil)
+	hostDef.key(state, key("R", "R", { shift = true }), cx)
+	eq(count(library.read().usage), 0, "counts cleared")
+	ok(string.find(tostring(state.message), "已重置使用次数", 1, true) ~= nil, "message")
+end)
+
+test("every shortcut is a button that carries its key", function()
+	loadHost()
+	local cx = hostCx()
+	local state = hostDef.init(cx, {}, nil)
+	local buttons = dockButtons(state, cx)
+	ok(#buttons >= 10, "all actions are buttons")
+
+	local byAct: { [string]: any } = {}
+	for _, b in ipairs(buttons) do
+		byAct[b.act] = b
+	end
+	eq(byAct.insert.keys[1], "Enter", "insert key")
+	eq(byAct.insert.variant, "primary", "primary tone")
+	eq(byAct.delete.variant, "danger", "delete tone")
+	eq(byAct.hideall.keys[1], "Shift+H", "hide-all key")
+	eq(byAct.reset.variant, "danger", "reset tone")
+	eq(byAct.scope.variant, "quiet", "utility tone")
+	eq(byAct.submit.keys[1], "a", "submit key")
+	eq(byAct.reset.keys[1], "Shift+R", "reset key")
+	eq(byAct.preview.keys[1], "Space", "preview key")
+end)
+
+test("the editor dock offers save and cancel", function()
+	loadHost()
+	local cx = hostCx()
+	local state = hostDef.init(cx, {}, nil)
+	hostDef.key(state, key("n"), cx)
+	local buttons = dockButtons(state, cx)
+	local acts: { [string]: any } = {}
+	for _, b in ipairs(buttons) do
+		acts[b.act] = b
+	end
+	eq(acts.save.keys[1], "Enter", "save key")
+	eq(acts.cancel.keys[1], "Esc", "cancel key")
 end)
 
 test("save returns the list state for the next start", function()
@@ -865,6 +994,9 @@ local function windowCx(opts: any?): any
 		pick = function(): any
 			return { next = function() end }
 		end,
+		run = function(_self: any, pane: number, text: string)
+			table.insert(typed, { pane = pane, text = text })
+		end,
 	}
 	return cx
 end
@@ -906,6 +1038,19 @@ test("the panel command opens the block and focuses an open one", function()
 	commands.panel.run(cx2)
 	eq(opened, 1, "no second block")
 	eq(focused, 1, "existing block focused")
+end)
+
+test("an insert action types the body into the agent composer", function()
+	loadWindow()
+	kvStore.action = { seq = 80, kind = "insert", pane = 2, body = "正文 A", name = "阿尔法" }
+	local cx = windowCx({ agents = { { pane = 9, state = "idle" } }, focused = 9 })
+	handlers.focus({}, cx)
+	pump(cx)
+	eq(#typed, 1, "typed once")
+	eq(typed[1].pane, 9, "into the agent pane")
+	eq(typed[1].text, "正文 A", "body typed")
+	eq(#asked, 0, "not submitted")
+	eq(toasts[1].level, "success", "toast")
 end)
 
 test("a plugin pane is recognized by its block kind", function()

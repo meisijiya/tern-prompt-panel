@@ -1,5 +1,5 @@
 --!strict
--- 提示词面板（宿主半边）：模板列表、筛选、编辑，以及与 omp 命令文件的同步。
+-- 提示词面板（宿主半边）：模板列表、筛选、预览、编辑，以及与 omp 命令文件的同步。
 --
 -- 面板是模板库的唯一真源；omp 的命令文件是派生结果，写在 ~/.omp/agent/commands/。
 -- 用户增量（自定义模板、使用次数、屏蔽、命令名）存 tern.kv，预制模板在插件目录里只读。
@@ -8,7 +8,6 @@
 -- 所以文本、光标都由这里维护（偏移是 UTF-16 码元）。
 
 local ui = tern.ui
-local catalog = require("./lib/catalog")
 local field = require("./lib/field")
 local library = require("./lib/library")
 local sync = require("./lib/sync")
@@ -16,14 +15,21 @@ local templates = require("./lib/templates")
 local util = require("./lib/util")
 
 local SCOPES: { templates.Scope } = { "all", "preset", "custom" }
-local SCOPE_LABEL = { all = "全部", preset = "预制", custom = "自定义" }
+local SCOPE_LABEL = { all = "全部", preset = "预制模板", custom = "自定义模板" }
 local LIST_KEY = "items"
 local LIST_ID = "main." .. LIST_KEY .. "."
 local ACTION_KEY = "action"
+-- 预览最多显示多少行正文。
+local PREVIEW_LINES = 14
 
-local FIELDS = { "name", "labels", "command", "body" }
-local FIELD_AT = { ["main.f_name"] = 1, ["main.f_labels"] = 2, ["main.f_command"] = 3, ["main.f_body"] = 4 }
-local FIELD_LABEL = { name = "名称", labels = "标签", command = "命令名", body = "正文" }
+local FIELDS = {
+	{ key = "name", id = "main.f_name", label = "名称" },
+	{ key = "labels", id = "main.f_labels", label = "标签" },
+	{ key = "command", id = "main.f_command", label = "命令名" },
+	{ key = "body", id = "main.f_body", label = "正文" },
+}
+
+type Mode = "browse" | "search" | "edit"
 
 type Draft = {
 	id: string,
@@ -36,22 +42,20 @@ type Draft = {
 
 type State = {
 	lib: library.Library,
-	mode: string, -- browse | search | edit
+	mode: Mode,
 	sel: string?,
 	scope: templates.Scope,
 	label: string?,
 	showHidden: boolean,
+	preview: boolean,
 	query: field.Field,
 	draft: Draft?,
 	message: string?,
 }
 
---- 全部模板（预制 + 自定义），带上 kv 里的使用次数、命令名与屏蔽状态。
+--- 全部模板（预制 + 自定义），带上 kv 里的使用次数与屏蔽状态。
 local function allTemplates(state: State): { templates.Template }
-	return templates.merge(catalog.load(), state.lib.custom, state.lib.usage, {
-		hideAllPresets = state.lib.hideAllPresets,
-		hidden = state.lib.hidden,
-	})
+	return library.templates(state.lib)
 end
 
 --- 当前筛选下的模板列表：范围 + 标签 + 子串，按使用次数降序。
@@ -78,11 +82,22 @@ local function selectedTemplate(state: State): templates.Template?
 	return visible[1]
 end
 
---- 把库写回 kv，并按需同步 omp 命令文件；返回命令文件是否变了。
-local function persist(state: State): boolean
-	local changed = sync.sync(state.lib, allTemplates(state))
+--- 把库写回 kv，并按需同步 omp 命令文件。
+local function persist(state: State): (boolean, number)
+	local changed, skipped = sync.sync(state.lib, allTemplates(state))
 	library.write(state.lib)
-	return changed
+	return changed, skipped
+end
+
+--- 动作提示：命令文件变了、或撞上手写文件时补一句。
+local function withSync(text: string, changed: boolean, skipped: number): string
+	if skipped > 0 then
+		return text .. "；" .. tostring(skipped) .. " 个命令名与手写文件冲突，已跳过"
+	end
+	if changed then
+		return text .. "；命令文件已更新，omp 里执行 /reload-plugins"
+	end
+	return text
 end
 
 --- 记一次使用。
@@ -90,22 +105,28 @@ local function countUse(state: State, id: string)
 	state.lib.usage[id] = (state.lib.usage[id] or 0) + 1
 end
 
---- 应用模板：复制正文到剪贴板，并提示它的 omp 命令名。
-local function applyTemplate(state: State, t: templates.Template, cx: BlockCx)
-	cx:copy(util.stripCursor(t.body))
+--- 插入模板：复制正文，并请窗口半边把它打进聚焦的 omp agent 的输入框。
+local function insertTemplate(state: State, t: templates.Template, cx: BlockCx)
 	countUse(state, t.id)
-	local changed = persist(state)
-	local name = sync.commandName(t)
+	cx:copy(util.stripCursor(t.body))
+	state.lib.seq += 1
+	library.write(state.lib)
+	tern.kv.set(ACTION_KEY, {
+		seq = state.lib.seq,
+		kind = "insert",
+		pane = cx.pane,
+		body = util.stripCursor(t.body),
+		name = t.name,
+	})
+	local name = templates.commandName(t)
 	cx:toast("success", "已复制：" .. t.name, "/" .. name)
-	state.message = if changed
-		then "已复制 /" .. name .. "；命令文件已更新，omp 里执行 /reload-plugins"
-		else "已复制 /" .. name
+	state.message = "已复制 /" .. name
 end
 
 --- 提交给聚焦的 omp agent：由窗口半边执行（host 写 kv，window 轮询）。
 local function submitTemplate(state: State, t: templates.Template, cx: BlockCx)
 	countUse(state, t.id)
-	state.lib.seq = state.lib.seq + 1
+	state.lib.seq += 1
 	library.write(state.lib)
 	tern.kv.set(ACTION_KEY, {
 		seq = state.lib.seq,
@@ -149,25 +170,25 @@ end
 --- 造一个新的自定义模板 id。
 local function nextCustomId(state: State): string
 	local id = "c" .. tostring(state.lib.nextId)
-	state.lib.nextId = state.lib.nextId + 1
+	state.lib.nextId += 1
 	return id
 end
 
---- 一条没被别的模板占着的命令名：先按名字生成，撞了就退回 id。
+--- 一条没被别的模板占着的命令名：先按名字生成，撞了就加序号。
 local function uniqueCommand(state: State, id: string, name: string): string
 	local taken: { [string]: boolean } = {}
 	for _, t in ipairs(allTemplates(state)) do
-		taken[sync.commandName(t)] = true
+		taken[templates.commandName(t)] = true
 	end
-	local base = library.defaultCommand(name)
-	if base ~= "" and not taken[base] then
-		return base
+	local base = templates.suggestCommand(name)
+	if base == "" then
+		base = "prompt-" .. id
 	end
-	local candidate = "prompt-" .. id
+	local candidate = base
 	local n = 1
 	while taken[candidate] do
 		n += 1
-		candidate = "prompt-" .. id .. "-" .. tostring(n)
+		candidate = base .. "-" .. tostring(n)
 	end
 	return candidate
 end
@@ -175,12 +196,13 @@ end
 --- 把选中的模板复制成自定义模板，进入编辑。
 local function copyToCustom(state: State, t: templates.Template)
 	local id = nextCustomId(state)
+	local name = if t.nameEn ~= "" then t.nameEn else t.name
 	state.lib.custom[id] = {
 		id = id,
 		name = t.name,
 		labels = util.deepCopy(t.labels),
 		body = t.body,
-		command = uniqueCommand(state, id, t.name),
+		command = uniqueCommand(state, id, name),
 	}
 	state.sel = id
 	persist(state)
@@ -211,11 +233,11 @@ local function saveDraft(state: State, draft: Draft): string?
 	if command == "" then
 		command = uniqueCommand(state, draft.id, name)
 	end
-	if not library.validCommandName(command) then
+	if not templates.validCommandName(command) then
 		return "命令名只能是小写字母、数字、- 和 _"
 	end
 	for _, t in ipairs(allTemplates(state)) do
-		if t.id ~= draft.id and sync.commandName(t) == command then
+		if t.id ~= draft.id and templates.commandName(t) == command then
 			return "命令名 /" .. command .. " 已被占用"
 		end
 	end
@@ -239,24 +261,28 @@ local function deleteTemplate(state: State, t: templates.Template)
 	end
 	state.lib.custom[t.id] = nil
 	state.lib.hidden[t.id] = nil
-	local changed = persist(state)
+	local changed, skipped = persist(state)
 	state.sel = nil
-	state.message = if changed
-		then "已删除 " .. t.name .. "；omp 里执行 /reload-plugins"
-		else "已删除 " .. t.name
+	state.message = withSync("已删除 " .. t.name, changed, skipped)
 end
 
 local function toggleHidden(state: State, t: templates.Template)
+	local text: string
 	if state.lib.hidden[t.id] then
 		state.lib.hidden[t.id] = nil
-		state.message = "已恢复 " .. t.name
+		text = "已恢复 " .. t.name
 	else
 		state.lib.hidden[t.id] = true
-		state.message = "已屏蔽 " .. t.name
+		text = "已屏蔽 " .. t.name
 	end
-	if persist(state) then
-		state.message ..= "；omp 里执行 /reload-plugins"
-	end
+	local changed, skipped = persist(state)
+	state.message = withSync(text, changed, skipped)
+end
+
+local function resetUsage(state: State)
+	state.lib.usage = {}
+	local changed, skipped = persist(state)
+	state.message = withSync("已重置使用次数", changed, skipped)
 end
 
 local function cycleScope(state: State)
@@ -338,7 +364,7 @@ local function editField(f: field.Field, key: Key): boolean
 end
 
 local function draftField(draft: Draft, at: number): field.Field
-	local which = FIELDS[at]
+	local which = FIELDS[at].key
 	if which == "name" then
 		return draft.name
 	elseif which == "labels" then
@@ -358,6 +384,40 @@ local function currentField(state: State): field.Field?
 	return draftField(draft, draft.at)
 end
 
+--- 正文按行截断，返回截断后的文本与是否还有更多。
+local function clipLines(text: string, maxLines: number): (string, boolean)
+	local out: { string } = {}
+	local n = 0
+	for line in string.gmatch(text .. "\n", "(.-)\n") do
+		if n >= maxLines then
+			return table.concat(out, "\n"), true
+		end
+		table.insert(out, line)
+		n += 1
+	end
+	return table.concat(out, "\n"), false
+end
+
+--- 选中模板的预览：命令名、标签、使用次数和正文。
+local function previewView(t: templates.Template): Node
+	local head: { Span | string } = {
+		ui.span(t.name, "strong"),
+		ui.span("  /" .. templates.commandName(t), "muted"),
+	}
+	if #t.labels > 0 then
+		table.insert(head, ui.span("  " .. table.concat(t.labels, " · "), "muted"))
+	end
+	if t.usage > 0 then
+		table.insert(head, ui.span("  用过 " .. tostring(t.usage) .. " 次", "muted"))
+	end
+	local body, clipped = clipLines(util.stripCursor(t.body), PREVIEW_LINES)
+	local kids: { Node } = { ui.text(head), ui.md(body) }
+	if clipped then
+		table.insert(kids, ui.text({ ui.span("…", "dim") }))
+	end
+	return ui.col(kids)
+end
+
 local function browseView(state: State, cx: BlockCx): Node
 	local visible = visibleTemplates(state)
 	local items: { any } = {}
@@ -369,7 +429,7 @@ local function browseView(state: State, cx: BlockCx): Node
 		table.insert(items, {
 			label = t.name,
 			detail = detail,
-			value = "/" .. sync.commandName(t),
+			value = "/" .. templates.commandName(t),
 			icon = if t.builtin then "prompt" else "note",
 			tone = if t.hidden then "muted" else nil,
 		})
@@ -384,7 +444,7 @@ local function browseView(state: State, cx: BlockCx): Node
 	local lp: { [string]: any } = list.p or {}
 	lp.key = LIST_KEY
 	lp.empty = { ui.span("没有匹配的模板", "muted") }
-	lp.max = { lines = math.max(4, cx.rows - 8) }
+	lp.max = { lines = math.max(4, cx.rows - (if state.preview then PREVIEW_LINES + 10 else 8)) }
 	local current = selectedTemplate(state)
 	lp.selected = if current then LIST_ID .. current.id else nil
 	list.p = lp
@@ -404,7 +464,7 @@ local function browseView(state: State, cx: BlockCx): Node
 		table.insert(header, ui.span("  已屏蔽全部预制", "warning"))
 	end
 
-	return ui.col({
+	local body: { Node } = {
 		ui.text(header),
 		ui.node("input", {
 			key = "f_query",
@@ -413,7 +473,11 @@ local function browseView(state: State, cx: BlockCx): Node
 			placeholder = "搜索名称、标签或正文（/ 进入搜索）",
 		}),
 		list,
-	})
+	}
+	if state.preview and current then
+		table.insert(body, previewView(current))
+	end
+	return ui.col(body)
 end
 
 local function editView(state: State): Node
@@ -422,15 +486,15 @@ local function editView(state: State): Node
 		ui.span(if state.lib.custom[draft.id] then "编辑模板" else "新建模板", "strong"),
 		ui.span("  " .. (state.message or "Tab 切换字段，正文里 Enter 保存，Esc 取消"), "muted"),
 	}
-	return ui.col({
+	local kids: { Node } = {
 		ui.text(label),
-		ui.text({ ui.span(FIELD_LABEL.name, "muted") }),
+		ui.text({ ui.span(FIELDS[1].label, "muted") }),
 		ui.node("input", { key = "f_name", text = draft.name.text, cursor = draft.name.cursor }),
-		ui.text({ ui.span(FIELD_LABEL.labels, "muted") }),
+		ui.text({ ui.span(FIELDS[2].label, "muted") }),
 		ui.node("input", { key = "f_labels", text = draft.labels.text, cursor = draft.labels.cursor }),
-		ui.text({ ui.span(FIELD_LABEL.command, "muted") }),
+		ui.text({ ui.span(FIELDS[3].label, "muted") }),
 		ui.node("input", { key = "f_command", text = draft.command.text, cursor = draft.command.cursor }),
-		ui.text({ ui.span(FIELD_LABEL.body, "muted") }),
+		ui.text({ ui.span(FIELDS[4].label, "muted") }),
 		ui.node("editor", {
 			key = "f_body",
 			text = draft.body.text,
@@ -438,11 +502,13 @@ local function editView(state: State): Node
 			maxLines = 8,
 			placeholder = "模板正文",
 		}),
-	})
+	}
+	return ui.col(kids)
 end
 
-local function badge(text: string, tone: string, act: string): Node
-	local node = ui.badge(text, tone)
+--- 一个可点的按钮；keys 会画成键帽。
+local function actionButton(text: string, keys: { string }, variant: string, act: string): Node
+	local node = ui.button(text, { keys = keys, variant = variant, size = "sm" })
 	local p: { [string]: any } = node.p or {}
 	p.actions = { click = act }
 	node.p = p
@@ -452,28 +518,37 @@ end
 local function dockView(state: State): Node
 	if state.mode == "edit" then
 		local editRows: { Node } = {
-			ui.text({ ui.span("正文里 Enter 保存、Shift+Enter 换行  ·  Esc 取消  ·  Tab 切换字段", "dim") }),
+			ui.row({
+				actionButton("保存", { "Enter" }, "primary", "save"),
+				actionButton("取消", { "Esc" }, "quiet", "cancel"),
+				ui.text({ ui.span("Shift+Enter 正文换行 · Tab 切换字段", "dim") }),
+			}),
 		}
 		if state.message then
 			table.insert(editRows, ui.text({ ui.span(state.message, "warning") }))
 		end
 		return ui.col(editRows)
 	end
+
 	local rows: { Node } = {
 		ui.row({
-			badge("应用", "accent", "apply"),
-			badge("编辑", "neutral", "edit"),
-			badge("复制为自定义", "neutral", "copy"),
-			badge("新建", "neutral", "new"),
-			badge("删除", "neutral", "delete"),
-			badge("同步命令", "neutral", "sync"),
+			actionButton("插入", { "Enter" }, "primary", "insert"),
+			actionButton("提交给 agent", { "a" }, "default", "submit"),
+			actionButton("编辑", { "e" }, "default", "edit"),
+			actionButton("复制为自定义", { "c" }, "default", "copy"),
+			actionButton("新建", { "n" }, "default", "new"),
+			actionButton("删除", { "d" }, "danger", "delete"),
 		}),
-		ui.text({
-			ui.span(
-				"Enter 应用 · a 提交给 agent · e 编辑 · c 复制 · n 新建 · d 删除 · "
-					.. "f 范围 · l 标签 · h 屏蔽 · H 全屏蔽 · v 含已屏蔽 · / 搜索 · r 同步",
-				"dim"
-			),
+		ui.row({
+			actionButton("范围", { "f" }, "quiet", "scope"),
+			actionButton("标签", { "l" }, "quiet", "label"),
+			actionButton("搜索", { "/" }, "quiet", "search"),
+			actionButton("预览", { "Space" }, "quiet", "preview"),
+			actionButton("屏蔽", { "h" }, "quiet", "hide"),
+			actionButton("全部屏蔽", { "Shift+H" }, "danger", "hideall"),
+			actionButton("含已屏蔽", { "v" }, "quiet", "showhidden"),
+			actionButton("同步命令", { "r" }, "quiet", "sync"),
+			actionButton("重置次数", { "Shift+R" }, "danger", "reset"),
 		}),
 	}
 	if state.mode == "search" then
@@ -499,6 +574,63 @@ local function moveSelection(state: State, delta: number)
 	end
 	local nextIndex = math.clamp(index + delta, 1, #visible)
 	state.sel = visible[nextIndex].id
+end
+
+--- 一个动作，键与按钮共用同一套。
+local function runAction(state: State, act: string, cx: BlockCx): boolean
+	local t = selectedTemplate(state)
+	if act == "insert" then
+		if t then
+			insertTemplate(state, t, cx)
+		end
+	elseif act == "submit" then
+		if t then
+			submitTemplate(state, t, cx)
+		end
+	elseif act == "edit" then
+		if t and not t.builtin then
+			openEditor(state, t.id)
+		elseif t then
+			state.message = "预制模板只读，可复制为自定义后编辑"
+		end
+	elseif act == "copy" then
+		if t then
+			copyToCustom(state, t)
+		end
+	elseif act == "new" then
+		openEditor(state, nextCustomId(state))
+	elseif act == "delete" then
+		if t then
+			deleteTemplate(state, t)
+		end
+	elseif act == "hide" then
+		if t then
+			toggleHidden(state, t)
+		end
+	elseif act == "hideall" then
+		state.lib.hideAllPresets = not state.lib.hideAllPresets
+		local changed, skipped = persist(state)
+		local text = if state.lib.hideAllPresets then "已屏蔽全部预制模板" else "已恢复全部预制模板"
+		state.message = withSync(text, changed, skipped)
+	elseif act == "showhidden" then
+		state.showHidden = not state.showHidden
+	elseif act == "preview" then
+		state.preview = not state.preview
+	elseif act == "scope" then
+		cycleScope(state)
+	elseif act == "label" then
+		cycleLabel(state)
+	elseif act == "search" then
+		state.mode = "search"
+	elseif act == "sync" then
+		local changed, skipped = persist(state)
+		state.message = withSync("命令文件已同步", changed, skipped)
+	elseif act == "reset" then
+		resetUsage(state)
+	else
+		return false
+	end
+	return true
 end
 
 local function browseKey(state: State, key: Key, cx: BlockCx): boolean?
@@ -532,58 +664,51 @@ local function browseKey(state: State, key: Key, cx: BlockCx): boolean?
 			state.sel = visible[#visible].id
 		end
 	elseif key.name == "enter" then
-		local t = selectedTemplate(state)
-		if t then
-			applyTemplate(state, t, cx)
-		end
+		runAction(state, "insert", cx)
+	elseif key.name == "space" then
+		runAction(state, "preview", cx)
 	elseif k == "a" then
-		local t = selectedTemplate(state)
-		if t then
-			submitTemplate(state, t, cx)
-		end
+		runAction(state, "submit", cx)
 	elseif k == "e" then
-		local t = selectedTemplate(state)
-		if t and not t.builtin then
-			openEditor(state, t.id)
-		elseif t then
-			state.message = "预制模板只读，可复制为自定义后编辑"
-		end
+		runAction(state, "edit", cx)
 	elseif k == "c" then
-		local t = selectedTemplate(state)
-		if t then
-			copyToCustom(state, t)
-		end
+		runAction(state, "copy", cx)
 	elseif k == "n" then
-		local id = nextCustomId(state)
-		openEditor(state, id)
+		runAction(state, "new", cx)
 	elseif k == "d" then
-		local t = selectedTemplate(state)
-		if t then
-			deleteTemplate(state, t)
-		end
-	elseif k == "f" then
-		cycleScope(state)
-	elseif k == "l" then
-		cycleLabel(state)
+		runAction(state, "delete", cx)
 	elseif k == "h" then
-		local t = selectedTemplate(state)
-		if t then
-			toggleHidden(state, t)
-		end
+		runAction(state, "hide", cx)
 	elseif k == "H" then
-		state.lib.hideAllPresets = not state.lib.hideAllPresets
-		persist(state)
-		state.message = if state.lib.hideAllPresets then "已屏蔽全部预制模板" else "已恢复全部预制模板"
+		runAction(state, "hideall", cx)
 	elseif k == "v" then
-		state.showHidden = not state.showHidden
+		runAction(state, "showhidden", cx)
+	elseif k == "f" then
+		runAction(state, "scope", cx)
+	elseif k == "l" then
+		runAction(state, "label", cx)
 	elseif k == "r" then
-		local changed = persist(state)
-		state.message = if changed then "命令文件已更新" else "命令文件没有变化"
+		runAction(state, "sync", cx)
+	elseif k == "R" then
+		runAction(state, "reset", cx)
 	elseif k == "/" then
-		state.mode = "search"
+		runAction(state, "search", cx)
 	else
 		return false
 	end
+	return true
+end
+
+--- 编辑态的保存；返回是否离开了编辑器。
+local function commitDraft(state: State, draft: Draft): boolean
+	local err = saveDraft(state, draft)
+	if err then
+		state.message = err
+		return false
+	end
+	local changed, skipped = persist(state)
+	state.message = withSync("已保存 " .. state.lib.custom[draft.id].name, changed, skipped)
+	state.mode = "browse"
 	return true
 end
 
@@ -607,21 +732,12 @@ local function editKey(state: State, key: Key): boolean?
 		return false
 	end
 	if key.name == "enter" then
-		if FIELDS[draft.at] ~= "body" then
+		if FIELDS[draft.at].key ~= "body" then
 			draft.at = (draft.at % #FIELDS) + 1
 		elseif key.shift then
 			field.insert(f, "\n")
 		else
-			local err = saveDraft(state, draft)
-			if err then
-				state.message = err
-				return true
-			end
-			local changed = persist(state)
-			state.message = if changed
-				then "已保存 " .. state.lib.custom[draft.id].name .. "；命令文件已更新，omp 里执行 /reload-plugins"
-				else "已保存 " .. state.lib.custom[draft.id].name
-			state.mode = "browse"
+			commitDraft(state, draft)
 		end
 		return true
 	end
@@ -643,6 +759,7 @@ tern.block.define("prompts", {
 			scope = "all",
 			label = nil,
 			showHidden = false,
+			preview = true,
 			query = field.new(""),
 			draft = nil,
 			message = nil,
@@ -651,6 +768,7 @@ tern.block.define("prompts", {
 			state.scope = saved.scope :: templates.Scope
 			state.label = saved.label
 			state.showHidden = saved.showHidden == true
+			state.preview = saved.preview ~= false
 			state.sel = saved.sel
 			state.query = field.new(saved.query or "")
 		end
@@ -670,7 +788,7 @@ tern.block.define("prompts", {
 
 	key = function(state: State, key: Key, cx: BlockCx): boolean?
 		if state.mode == "edit" then
-			return editKey(state, key, cx)
+			return editKey(state, key)
 		end
 		return browseKey(state, key, cx)
 	end,
@@ -680,49 +798,38 @@ tern.block.define("prompts", {
 			local item = ev.item
 			state.sel = if string.sub(item, 1, #LIST_ID) == LIST_ID then string.sub(item, #LIST_ID + 1) else item
 			if ev.ev == "activate" then
-				local t = selectedTemplate(state)
-				if t then
-					applyTemplate(state, t, cx)
-				end
+				runAction(state, "insert", cx)
 			end
 			return
 		end
 		if ev.ev == "focus" and type(ev.id) == "string" then
 			if ev.id == "main.f_query" then
 				state.mode = "search"
-			elseif state.mode == "edit" and FIELD_AT[ev.id] and state.draft then
-				state.draft.at = FIELD_AT[ev.id]
+			elseif state.mode == "edit" and state.draft then
+				for i, f in ipairs(FIELDS) do
+					if f.id == ev.id then
+						state.draft.at = i
+						return
+					end
+				end
 			end
 			return
 		end
 		if ev.ev ~= "action" then
 			return
 		end
-		local t = selectedTemplate(state)
-		if ev.act == "apply" then
-			if t then
-				applyTemplate(state, t, cx)
+		if state.mode == "edit" then
+			if ev.act == "save" and state.draft then
+				commitDraft(state, state.draft)
+			elseif ev.act == "cancel" then
+				state.draft = nil
+				state.mode = "browse"
+				state.message = nil
 			end
-		elseif ev.act == "edit" then
-			if t and not t.builtin then
-				openEditor(state, t.id)
-			elseif t then
-				state.message = "预制模板只读，可复制为自定义后编辑"
-			end
-		elseif ev.act == "copy" then
-			if t then
-				copyToCustom(state, t)
-			end
-		elseif ev.act == "new" then
-			local id = nextCustomId(state)
-			openEditor(state, id)
-		elseif ev.act == "delete" then
-			if t then
-				deleteTemplate(state, t)
-			end
-		elseif ev.act == "sync" then
-			local changed = persist(state)
-			state.message = if changed then "命令文件已更新" else "命令文件没有变化"
+			return
+		end
+		if type(ev.act) == "string" then
+			runAction(state, ev.act, cx)
 		end
 	end,
 
@@ -731,6 +838,7 @@ tern.block.define("prompts", {
 			scope = state.scope,
 			label = state.label,
 			showHidden = state.showHidden,
+			preview = state.preview,
 			sel = state.sel,
 			query = state.query.text,
 		}

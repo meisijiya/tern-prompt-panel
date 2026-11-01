@@ -65,10 +65,4 @@ function M.moveDown(f: Field)
 	f.cursor = util.nextLine16(f.text, f.cursor)
 end
 
---- 应用外部（tern 原生编辑）发来的改动：替换 [from, to) 为 text，光标落在 cursor。
-function M.splice(f: Field, from: number, to: number, text: string, cursor: number)
-	f.text = util.splice16(f.text, from, to, text)
-	f.cursor = cursor
-end
-
 return M

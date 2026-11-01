@@ -96,19 +96,36 @@ function M.parseFrontmatter(head: string): { [string]: string }
 	return meta
 end
 
---- 默认命令名：prompt-<slug>；没有可用 slug 时退回 id。
-function M.defaultCommand(t: { id: string, name: string, nameEn: string }): string
-	local slug = util.slug(t.nameEn)
+--- 命令名合法性：它既是文件名，也是 omp 的命令名。
+function M.validCommandName(name: string): boolean
+	return name:match("^[a-z0-9][a-z0-9_-]*$") ~= nil
+end
+
+--- 按名字生成一条命令名：prompt-<slug>；slug 为空时返回空串。
+function M.suggestCommand(name: string): string
+	local slug = util.slug(name)
 	if slug == "" then
-		slug = util.slug(t.name)
-	end
-	if slug == "" then
-		slug = util.slug(t.id)
-	end
-	if slug == "" then
-		slug = "t" .. t.id
+		return ""
 	end
 	return "prompt-" .. slug
+end
+
+--- 模板生效的命令名：自定义模板用自己的，其余按英文名、名字、id 依次生成。
+function M.commandName(t: Template): string
+	if t.command and M.validCommandName(t.command) then
+		return t.command
+	end
+	local base = M.suggestCommand(t.nameEn)
+	if base == "" then
+		base = M.suggestCommand(t.name)
+	end
+	if base == "" then
+		base = M.suggestCommand(t.id)
+	end
+	if base == "" then
+		base = "prompt-t" .. t.id
+	end
+	return base
 end
 
 --- 预制与自定义合并成一张表；usage 与 hidden 从 kv 覆盖。
@@ -160,7 +177,7 @@ function M.filter(list: { Template }, f: Filter): { Template }
 			continue
 		end
 		if query ~= "" then
-			local haystack = (t.name .. " " .. t.nameEn .. " " .. t.body):lower()
+			local haystack = (t.name .. " " .. t.nameEn .. " " .. table.concat(t.labels, " ") .. " " .. t.body):lower()
 			if not string.find(haystack, query, 1, true) then
 				continue
 			end

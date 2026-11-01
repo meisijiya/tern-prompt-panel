@@ -3,6 +3,7 @@
 --
 -- kv 的读会因半写入而抛错，两个半边都读它，所以每次读都走 pcall。
 
+local catalog = require("./catalog")
 local templates = require("./templates")
 local util = require("./util")
 
@@ -96,18 +97,12 @@ function M.write(lib: Library)
 	})
 end
 
---- 自定义模板的默认命令名：prompt-<slug>。
-function M.defaultCommand(name: string): string
-	local slug = util.slug(name)
-	if slug == "" then
-		return ""
-	end
-	return "prompt-" .. slug
-end
-
---- 命令名合法性：只允许小写字母、数字、连字符和下划线（它是文件名，也是 omp 的命令名）。
-function M.validCommandName(name: string): boolean
-	return name:match("^[a-z0-9][a-z0-9_-]*$") ~= nil
+--- 库里的全部模板（预制 + 自定义），带上使用次数与屏蔽状态。
+function M.templates(lib: Library): { templates.Template }
+	return templates.merge(catalog.load(), lib.custom, lib.usage, {
+		hideAllPresets = lib.hideAllPresets,
+		hidden = lib.hidden,
+	})
 end
 
 return M
