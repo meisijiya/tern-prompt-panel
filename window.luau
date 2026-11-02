@@ -19,7 +19,7 @@ local lastAgent: number? = nil
 -- 已经处理过的请求序号，避免重复提交。
 local seenSeq = 0
 
---- 面板的全部模板（预制 + 自定义），与面板里看到的一致。
+--- 面板的全部模板（预置 + 自定义），与面板里看到的一致。
 local function allTemplates(): { templates.Template }
 	return library.templates(library.read())
 end
@@ -174,7 +174,7 @@ local function quickInsert(cx: WindowCx)
 			table.insert(items, {
 				label = t.name,
 				detail = table.concat(t.labels, " · "),
-				group = if t.builtin then "预制模板" else "自定义模板",
+				group = if t.builtin then "预置模板" else "自定义模板",
 				body = util.stripCursor(t.body),
 				name = t.name,
 			})

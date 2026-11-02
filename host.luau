@@ -2,7 +2,7 @@
 -- 提示词面板（宿主半边）：模板列表、筛选、预览、编辑，以及与 omp 命令文件的同步。
 --
 -- 面板是模板库的唯一真源；omp 的命令文件是派生结果，写在 ~/.omp/agent/commands/。
--- 用户增量（自定义模板、使用次数、屏蔽、命令名）存 tern.kv，预制模板在插件目录里只读。
+-- 用户增量（自定义模板、使用次数、屏蔽、命令名）存 tern.kv，预置模板在插件目录里只读。
 --
 -- 键由插件自己处理：块没有开启 edit 特性，所有按键都进 key handler，
 -- 所以文本、光标都由这里维护（偏移是 UTF-16 码元）。
@@ -15,7 +15,7 @@ local templates = require("./lib/templates")
 local util = require("./lib/util")
 
 local SCOPES: { templates.Scope } = { "all", "preset", "custom" }
-local SCOPE_LABEL = { all = "全部", preset = "预制模板", custom = "自定义模板" }
+local SCOPE_LABEL = { all = "全部", preset = "预置模板", custom = "自定义模板" }
 local LIST_KEY = "items"
 local LIST_ID = "main." .. LIST_KEY .. "."
 local LABEL_KEY = "labels"
@@ -60,7 +60,7 @@ type State = {
 	message: string?,
 }
 
---- 全部模板（预制 + 自定义），带上 kv 里的使用次数与屏蔽状态。
+--- 全部模板（预置 + 自定义），带上 kv 里的使用次数与屏蔽状态。
 local function allTemplates(state: State): { templates.Template }
 	return library.templates(state.lib)
 end
@@ -263,7 +263,7 @@ end
 
 local function deleteTemplate(state: State, t: templates.Template)
 	if t.builtin then
-		state.message = "预制模板不能删除，可以屏蔽"
+		state.message = "预置模板不能删除，可以屏蔽"
 		return
 	end
 	state.trash = util.deepCopy(state.lib.custom[t.id])
@@ -511,7 +511,7 @@ local function browseView(state: State, cx: BlockCx): Node
 		table.insert(header, ui.span("  含已屏蔽", "muted"))
 	end
 	if state.lib.hideAllPresets then
-		table.insert(header, ui.span("  已屏蔽全部预制", "warning"))
+		table.insert(header, ui.span("  已屏蔽全部预置", "warning"))
 	end
 
 	local body: { Node } = {
@@ -744,7 +744,7 @@ local function runAction(state: State, act: string, cx: BlockCx): boolean
 		if t and not t.builtin then
 			openEditor(state, t.id)
 		elseif t then
-			state.message = "预制模板只读，可复制为自定义后编辑"
+			state.message = "预置模板只读，可复制为自定义后编辑"
 		end
 	elseif act == "copy" then
 		if t then
@@ -763,7 +763,7 @@ local function runAction(state: State, act: string, cx: BlockCx): boolean
 	elseif act == "hideall" then
 		state.lib.hideAllPresets = not state.lib.hideAllPresets
 		local changed, skipped = persist(state)
-		local text = if state.lib.hideAllPresets then "已屏蔽全部预制模板" else "已恢复全部预制模板"
+		local text = if state.lib.hideAllPresets then "已屏蔽全部预置模板" else "已恢复全部预置模板"
 		state.message = withSync(text, changed, skipped)
 	elseif act == "showhidden" then
 		state.showHidden = not state.showHidden

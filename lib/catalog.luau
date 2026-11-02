@@ -1,7 +1,7 @@
 --!strict
--- 预制模板目录读取：插件目录下的 presets/*.md（只读）。
+-- 预置模板目录读取：插件目录下的 presets/*.md（只读）。
 --
--- 预制模板随插件分发，用户增量在 tern.kv；这里只负责把 .md 解析成模板。
+-- 预置模板随插件分发，用户增量在 tern.kv；这里只负责把 .md 解析成模板。
 
 local templates = require("./templates")
 
@@ -9,7 +9,7 @@ local M = {}
 
 local cache: { templates.Template }? = nil
 
---- 读出全部预制模板，按 id 排序；读失败的文件跳过。
+--- 读出全部预置模板，按 id 排序；读失败的文件跳过。
 function M.load(): { templates.Template }
 	if cache then
 		return cache

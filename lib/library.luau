@@ -1,5 +1,5 @@
 --!strict
--- 模板库的真源：预制模板在插件目录（只读），用户增量在 tern.kv。
+-- 模板库的真源：预置模板在插件目录（只读），用户增量在 tern.kv。
 --
 -- kv 的读会因半写入而抛错，两个半边都读它，所以每次读都走 pcall。
 
@@ -97,7 +97,7 @@ function M.write(lib: Library)
 	})
 end
 
---- 库里的全部模板（预制 + 自定义），带上使用次数与屏蔽状态。
+--- 库里的全部模板（预置 + 自定义），带上使用次数与屏蔽状态。
 function M.templates(lib: Library): { templates.Template }
 	return templates.merge(catalog.load(), lib.custom, lib.usage, {
 		hideAllPresets = lib.hideAllPresets,

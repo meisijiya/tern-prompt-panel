@@ -1,7 +1,7 @@
 --!strict
--- 模板库模型：预制模板（插件目录，只读）+ 自定义模板（kv），以及筛选与排序。
+-- 模板库模型：预置模板（插件目录，只读）+ 自定义模板（kv），以及筛选与排序。
 --
--- 预制模板的元数据放在 .md 的 frontmatter 里，解析器只认自己写出的那几个键。
+-- 预置模板的元数据放在 .md 的 frontmatter 里，解析器只认自己写出的那几个键。
 
 local util = require("./util")
 
@@ -41,7 +41,7 @@ export type Filter = {
 	showHidden: boolean,
 }
 
---- 解析一个预制模板文件的内容（frontmatter + 正文）。
+--- 解析一个预置模板文件的内容（frontmatter + 正文）。
 function M.parsePreset(text: string): Template?
 	local head, body = M.splitFrontmatter(text)
 	if not head then
@@ -128,7 +128,7 @@ function M.commandName(t: Template): string
 	return base
 end
 
---- 预制与自定义合并成一张表；usage 与 hidden 从 kv 覆盖。
+--- 预置与自定义合并成一张表；usage 与 hidden 从 kv 覆盖。
 function M.merge(
 	presets: { Template },
 	custom: { [string]: CustomTemplate },

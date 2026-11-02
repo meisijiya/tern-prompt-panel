@@ -3,7 +3,7 @@
 --
 --   luau test/run_tests.luau
 --
--- tern 的 API 用内存桩顶替：kv 是一个表，fs 是一张路径表，预制模板是三个固定条目。
+-- tern 的 API 用内存桩顶替：kv 是一个表，fs 是一张路径表，预置模板是三个固定条目。
 -- 桩只实现被测代码真正用到的那部分，多实现一处就可能把真机上的坑盖住。
 
 -- ---------------------------------------------------------------- stub ----
@@ -146,7 +146,7 @@ local ternStub = {
 	},
 }
 
--- 预制模板：catalog 从 "presets" 目录读它们。
+-- 预置模板：catalog 从 "presets" 目录读它们。
 local PRESETS = {
 	["presets/alpha.md"] = "---\nid: alpha\nname: 阿尔法\nnameEn: Alpha\nlabels: 思考,决策\n---\n正文 A\n",
 	["presets/beta.md"] = "---\nid: beta\nname: 贝塔\nlabels: 执行\n---\n正文 B\n",
@@ -838,7 +838,7 @@ test("e on a preset explains it is read-only", function()
 	local state = hostDef.init(cx, {}, nil)
 	hostDef.key(state, key("e"), cx)
 	eq(state.mode, "browse", "no editor")
-	eq(state.message, "预制模板只读，可复制为自定义后编辑", "message")
+	eq(state.message, "预置模板只读，可复制为自定义后编辑", "message")
 end)
 
 test("c copies a preset into an editable custom template", function()
@@ -966,7 +966,7 @@ test("deleting a preset leaves nothing to undo", function()
 	state.sel = "alpha"
 	hostDef.key(state, key("d"), cx)
 	eq(state.trash, nil, "no trash")
-	ok(string.find(tostring(state.message), "预制模板不能删除", 1, true) ~= nil, "explains why")
+	ok(string.find(tostring(state.message), "预置模板不能删除", 1, true) ~= nil, "explains why")
 end)
 
 test("the undo button only shows when there is something to undo", function()
