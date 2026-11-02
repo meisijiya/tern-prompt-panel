@@ -10,7 +10,7 @@
 一段可复用的提示词文本，带名称、标签与绑定信息；面板管理的最小单位。
 _Avoid_: 提示词、prompt、指令、词条
 
-**Preset Template**:
+**Preset Template**（预置模板）:
 随插件分发的一组 Prompt Template。只读、不可删除，但可以被整体屏蔽。
 _Avoid_: 预制、preset、内置模板（裸词）、模板
 

@@ -1,6 +1,6 @@
 # tern-prompt-panel
 
-[Tern](https://tern.build) 的提示词面板：预制与自定义模板的可视化增删改查，并把每个模板绑成一条 omp 斜杠命令。
+[Tern](https://tern.build) 的提示词面板：预置与自定义模板的可视化增删改查，并把每个模板绑成一条 omp 斜杠命令。
 
 ![提示词面板](docs/panel.png)
 
@@ -41,8 +41,8 @@ tern plugin link /path/to/tern-prompt-panel
 | `e` / `c` | 编辑 / 复制为自定义模板 |
 | `n` / `d` | 新建 / 删除自定义模板 |
 | `u` | 撤回最近一次删除（按钮也只在有东西可撤回时出现） |
-| `f` / `l` | 切换范围（全部·预制·自定义）/ 打开标签菜单（每行带条数，`Enter` 或单击应用） |
-| `h` / `Shift+H` | 屏蔽这一条 / 屏蔽全部预制模板 |
+| `f` / `l` | 切换范围（全部·预置·自定义）/ 打开标签菜单（每行带条数，`Enter` 或单击应用） |
+| `h` / `Shift+H` | 屏蔽这一条 / 屏蔽全部预置模板 |
 | `v` | 显示已屏蔽的模板 |
 | `/` | 搜索名称、标签或正文 |
 | `r` / `Shift+R` | 立刻同步命令文件 / 重置全部使用次数 |
@@ -72,10 +72,11 @@ tern plugin link /path/to/tern-prompt-panel
 - 目录解析跟 omp 一致：`PI_CODING_AGENT_DIR`，其次
   `<home>/<PI_CONFIG_DIR|.omp>[/profiles/<profile>]/agent/commands`。
 
-## 预制模板
+## 预置模板
 
-`presets/*.md` 共 24 条，随插件分发、只读，但可以屏蔽（单条 `h`，全部 `Shift+H`）。
-内容改编自 [dsh-prompt](https://github.com/FeatherHunter/dsh-prompt)（MIT）。
+`presets/*.md` 共 26 条，随插件分发、只读，但可以屏蔽（单条 `h`，全部 `Shift+H`）。
+其中 24 条改编自 [dsh-prompt](https://github.com/FeatherHunter/dsh-prompt)（MIT）；`overdesign`
+与 `award` 是本项目的审计动作。
 
 ## 数据
 
@@ -87,7 +88,7 @@ tern plugin link /path/to/tern-prompt-panel
 - `host.luau`：面板 block（列表、筛选、编辑、同步）。
 - `window.luau`：命令、状态栏，以及把“提交给 agent”经 kv 转交给 omp。
 - `lib/`：纯逻辑——UTF-16 光标、模板模型、模板库、命令文件、同步。
-- `presets/`、`styles.css`：预制模板与排版，颜色交给主题。
+- `presets/`、`styles.css`：预置模板与排版，颜色交给主题。
 - `tern.d.luau`：`tern plugin types .` 生成的类型定义，给 luau-lsp 用。
 
 测试（需要 [luau CLI](https://github.com/luau-lang/luau/releases)，桩、`lib/`、两个半边拼在一起跑）：
